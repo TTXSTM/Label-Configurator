@@ -465,5 +465,129 @@
     });
   }
 })();
+</script>
+
+<script>
+// ── Codes offset slider ────────────────────────────────────────────────────
+(function() {
+  var offsetPx = 0;
+
+  function applyOffset(px) {
+    offsetPx = px;
+    document.querySelectorAll('[data-testid="preview-code-stack"]').forEach(function(el) {
+      el.style.marginLeft = px + 'px';
+    });
+  }
+
+  function getMaxOffset() {
+    var codeStack = document.querySelector('[data-testid="preview-code-stack"]');
+    var safeZone  = document.querySelector('[data-testid="overlay-safezone"]');
+    var surface   = document.querySelector('[data-testid="preview-label-surface"]');
+    if (!codeStack || !surface) return { min: -200, max: 200 };
+
+    var codeRect    = codeStack.getBoundingClientRect();
+    var boundRect   = safeZone ? safeZone.getBoundingClientRect() : surface.getBoundingClientRect();
+
+    // How far can we move right before right edge of codes hits safe zone right
+    var maxRight = Math.floor(boundRect.right - codeRect.right);
+    // How far can we move left before left edge of codes hits safe zone left
+    var maxLeft  = Math.floor(boundRect.left  - codeRect.left);
+
+    return { min: maxLeft + offsetPx, max: maxRight + offsetPx };
+  }
+
+  function injectSlider() {
+    if (document.getElementById('codes-offset-slider-wrap')) return;
+    var surface = document.querySelector('[data-testid="preview-label-surface"]');
+    if (!surface) return;
+
+    var wrap = document.createElement('div');
+    wrap.id = 'codes-offset-slider-wrap';
+    wrap.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'gap:10px',
+      'padding:8px 16px',
+      'background:var(--card,#fff)',
+      'border:1px solid hsl(var(--border,220 13% 91%))',
+      'border-radius:8px',
+      'margin-top:8px',
+      'font-size:12px',
+      'color:var(--foreground,#0a0a0a)',
+      'font-family:Inter,system-ui,sans-serif',
+    ].join(';');
+
+    var label = document.createElement('span');
+    label.style.cssText = 'white-space:nowrap;font-weight:600;flex-shrink:0;';
+    label.textContent = '← Коды →';
+
+    var slider = document.createElement('input');
+    slider.type  = 'range';
+    slider.id    = 'codes-offset-range';
+    slider.min   = '-300';
+    slider.max   = '300';
+    slider.value = '0';
+    slider.step  = '1';
+    slider.style.cssText = 'flex:1;accent-color:hsl(var(--primary,174 100% 22%));cursor:pointer;';
+
+    var valueLabel = document.createElement('span');
+    valueLabel.style.cssText = 'min-width:40px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0;';
+    valueLabel.textContent = '0 px';
+
+    var resetBtn = document.createElement('button');
+    resetBtn.textContent = '↺';
+    resetBtn.title = 'Сбросить';
+    resetBtn.style.cssText = [
+      'border:1px solid hsl(var(--border,220 13% 91%))',
+      'background:transparent',
+      'border-radius:4px',
+      'padding:2px 7px',
+      'cursor:pointer',
+      'font-size:14px',
+      'flex-shrink:0',
+    ].join(';');
+
+    slider.addEventListener('input', function() {
+      var raw = parseInt(this.value, 10);
+      var bounds = getMaxOffset();
+      var clamped = Math.max(bounds.min, Math.min(bounds.max, raw));
+      if (clamped !== raw) this.value = clamped;
+      valueLabel.textContent = clamped + ' px';
+      applyOffset(clamped);
+    });
+
+    resetBtn.addEventListener('click', function() {
+      slider.value = 0;
+      valueLabel.textContent = '0 px';
+      applyOffset(0);
+    });
+
+    wrap.appendChild(label);
+    wrap.appendChild(slider);
+    wrap.appendChild(valueLabel);
+    wrap.appendChild(resetBtn);
+
+    // Insert right after the label surface scroll container
+    var container = surface.parentElement;
+    while (container && !container.parentElement.matches('section,[class*="space-y"],[class*="flex-col"]')) {
+      container = container.parentElement;
+    }
+    if (container && container.parentElement) {
+      container.parentElement.insertBefore(wrap, container.nextSibling);
+    }
+  }
+
+  var obs = new MutationObserver(function() {
+    injectSlider();
+    // Re-apply offset if React re-renders reset it
+    if (offsetPx !== 0) {
+      var cs = document.querySelector('[data-testid="preview-code-stack"]');
+      if (cs && parseInt(cs.style.marginLeft || '0', 10) !== offsetPx) {
+        applyOffset(offsetPx);
+      }
+    }
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+})();
 </script></body>
 </html>
