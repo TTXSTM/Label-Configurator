@@ -2,7 +2,8 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <!-- убран maximum-scale=1 — блокировал зум на мобильных (WCAG 1.4.4) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Label Configurator — макет термоэтикетки</title>
     <meta name="description" content="Конфигуратор макета термоэтикетки для e-commerce: пресеты размеров, предпросмотр, печать с физическими размерами." />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3.5' y='6' width='25' height='20' rx='2.5' fill='none' stroke='%2301696F' stroke-width='2'/><rect x='7' y='15.5' width='6.5' height='6.5' fill='%2301696F'/></svg>" />
@@ -19,415 +20,92 @@
   </head>
   <body>
     <div id="root"></div>
-  <script data-pplx-inline-edit>
+    <noscript>
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif;text-align:center;padding:2rem;">
+        <p>Для работы Label Configurator необходим JavaScript. Пожалуйста, включите его в настройках браузера.</p>
+      </div>
+    </noscript>
 
-  const allowedParentOrigins = ["https://www.perplexity.ai","https://perplexity.ai","https://testing.perplexity.ai","https://staging.perplexity.ai","https://*.preview.i.perplexity.ai","http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173"];
-  const MAX_FONT_BYTES = 500 * 1024;
-  const MAX_TOTAL_FONT_BYTES = 2 * 1024 * 1024;
-  let scrollForwarding = false;
-  let scrollRaf = 0;
-  let trustedTopOrigin = null;
-
-  // Allow entries like "https://*.preview.i.perplexity.ai" — the wildcard
-  // matches a single DNS label (no dots), so "https://*.foo" cannot stretch
-  // across multiple labels.
-  function matchesAllowedOrigin(origin) {
-    if (!origin) return false;
-    for (const entry of allowedParentOrigins) {
-      if (!entry.includes("*")) {
-        if (entry === origin) return true;
-        continue;
-      }
-      const pattern = new RegExp(
-        "^" +
-          entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+") +
-          "$",
-      );
-      if (pattern.test(origin)) return true;
-    }
-    return false;
-  }
-
-  // Trust decision: when the sender is same-origin-visible (event.origin is a
-  // real origin like https://www.perplexity.ai) we trust event.origin directly.
-  // When event.origin is "null" (opaque broker srcdoc), we fall back to the
-  // broker's stamped `parentOrigin` to identify the top window. The fallback
-  // is claim-only — we rely on the browser's native `targetOrigin` enforcement
-  // on the response path (see postToTrustedTop) to ensure replies can't be
-  // delivered to anyone but the actual top window of that claimed origin.
-  function getTrustedParentOrigin(event) {
-    const forwardedParentOrigin =
-      typeof event.data.parentOrigin === "string" ? event.data.parentOrigin : null;
-    const parentOrigin = event.origin === "null" ? forwardedParentOrigin : event.origin;
-    return matchesAllowedOrigin(parentOrigin) ? parentOrigin : null;
-  }
-
-  // All responses go to window.top with targetOrigin = the allowlisted origin.
-  // An attacker that iframes us inside their own null-origin broker can claim
-  // any parentOrigin they like, but the browser will drop the reply whenever
-  // the real top's origin doesn't match — so the screenshot never leaves.
-  function postToTrustedTop(message) {
-    if (!trustedTopOrigin) return;
-    try {
-      window.top.postMessage(message, trustedTopOrigin);
-    } catch (_error) {}
-  }
-
-  function inlineAll(original, clone) {
-    if (original.nodeType !== 1 || clone.nodeType !== 1) return;
-
-    try {
-      const computedStyle = getComputedStyle(original);
-      // cssText on a computed style is the serialized declaration in modern
-      // Chromium/Safari — a single read beats enumerating ~400 longhand
-      // properties. Firefox returns "" here, so we fall back on empty.
-      const serialized = computedStyle.cssText;
-      if (serialized) {
-        clone.style.cssText = serialized;
-      } else {
-        const parts = new Array(computedStyle.length);
-        for (let index = 0; index < computedStyle.length; index += 1) {
-          const property = computedStyle[index];
-          parts[index] = `${property}:${computedStyle.getPropertyValue(property)};`;
-        }
-        clone.style.cssText = parts.join("");
-      }
-    } catch (_error) {}
-
-    const originalChildren = original.children;
-    const clonedChildren = clone.children;
-    for (
-      let index = 0;
-      index < originalChildren.length && index < clonedChildren.length;
-      index += 1
-    ) {
-      inlineAll(originalChildren[index], clonedChildren[index]);
-    }
-  }
-
-  function extractFontUrl(srcValue) {
-    const matches = [
-      ...srcValue.matchAll(
-        /url\(["']?([^"')]+)["']?\)(?:\s*format\(["']?([^"')]+)["']?\))?/gi,
-      ),
-    ];
-    if (matches.length === 0) return null;
-    const woff2 = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff2"));
-    if (woff2) return woff2[1];
-    const woff = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff"));
-    if (woff) return woff[1];
-    return matches[0][1];
-  }
-
-  // Cache resolved font URL -> data URI across captures. Fonts on a page
-  // essentially never change, and a batch run emits multiple captures back to
-  // back — without this we'd refetch + re-base64 every time.
-  const fontDataUriCache = new Map();
-  const SRC_DECLARATION_RE = /src\s*:\s*[^;}]+/i;
-
-  async function fetchAsDataUri(url) {
-    if (fontDataUriCache.has(url)) return fontDataUriCache.get(url);
-    let dataUri = null;
-    try {
-      const response = await fetch(url, { mode: "cors", credentials: "omit" });
-      if (response.ok) {
-        const blob = await response.blob();
-        if (blob.size <= MAX_FONT_BYTES) {
-          dataUri = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () =>
-              resolve(typeof reader.result === "string" ? reader.result : null);
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(blob);
-          });
-        }
-      }
-    } catch (_error) {
-      dataUri = null;
-    }
-    fontDataUriCache.set(url, dataUri);
-    return dataUri;
-  }
-
-  function collectFontFaceRuleTexts() {
-    const rules = [];
-    for (const sheet of document.styleSheets) {
-      let cssRules;
-      try {
-        cssRules = sheet.cssRules;
-      } catch (_error) {
-        continue;
-      }
-      if (!cssRules) continue;
-      for (const rule of cssRules) {
-        const cssText = rule.cssText || "";
-        if (cssText.startsWith("@font-face")) rules.push(cssText);
-      }
-    }
-    return rules;
-  }
-
-  async function buildInlinedFontCss() {
-    const ruleTexts = collectFontFaceRuleTexts();
-    if (ruleTexts.length === 0) return null;
-
-    const resolved = ruleTexts.map((cssText) => {
-      if (!SRC_DECLARATION_RE.test(cssText)) return null;
-      const srcMatch = cssText.match(/src\s*:\s*([^;}]+)[;}]/i);
-      if (!srcMatch) return null;
-      const url = extractFontUrl(srcMatch[1]);
-      if (!url) return null;
-      try {
-        return { cssText, url: new URL(url, document.baseURI).href };
-      } catch (_error) {
-        return null;
-      }
-    });
-
-    const dataUris = await Promise.all(
-      resolved.map((entry) => (entry ? fetchAsDataUri(entry.url) : Promise.resolve(null))),
-    );
-
-    const inlined = [];
-    let totalBytes = 0;
-    for (let index = 0; index < resolved.length; index += 1) {
-      const entry = resolved[index];
-      const dataUri = dataUris[index];
-      if (!entry || !dataUri) continue;
-      const approxBytes = dataUri.length * 0.75;
-      if (totalBytes + approxBytes > MAX_TOTAL_FONT_BYTES) break;
-      totalBytes += approxBytes;
-      inlined.push(entry.cssText.replace(SRC_DECLARATION_RE, `src: url("${dataUri}")`));
-    }
-    return inlined.length > 0 ? inlined.join("\n") : null;
-  }
-
-  function stripExternal(clone) {
-    const images = clone.querySelectorAll("img");
-    for (let index = 0; index < images.length; index += 1) {
-      const src = images[index].getAttribute("src");
-      if (src && !src.startsWith("data:")) images[index].removeAttribute("src");
-    }
-
-    const elements = clone.querySelectorAll("*");
-    for (let index = 0; index < elements.length; index += 1) {
-      const style = elements[index].style.cssText;
-      if (style && style.includes("url(")) {
-        elements[index].style.cssText = style.replace(
-          /url\(["']?(?!data:)[^)"']*["']?\)/gi,
-          "none",
-        );
-      }
-    }
-  }
-
-  function emitScroll() {
-    scrollRaf = 0;
-    if (!scrollForwarding) return;
-    postToTrustedTop({
-      type: "INLINE_EDIT_SCROLL",
-      scrollX: window.scrollX,
-      scrollY: window.scrollY,
-    });
-  }
-
-  window.addEventListener(
-    "scroll",
-    function () {
-      if (!scrollForwarding || scrollRaf) return;
-      scrollRaf = requestAnimationFrame(emitScroll);
-    },
-    { passive: true, capture: true },
-  );
-
-  async function handleCaptureRequest(event) {
-    const requestId = event.data.requestId;
-    const scrollX = window.scrollX;
-    const scrollY = window.scrollY;
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-
-    function postResult(dataUrl) {
-      postToTrustedTop({
-        type: "INLINE_EDIT_SCREENSHOT_RESULT",
-        requestId,
-        dataUrl,
-        scrollX,
-        scrollY,
-      });
-    }
-
-    try {
-      // Wait for any pending web fonts to resolve so both inline metrics and
-      // the @font-face inlining below see the same loaded faces.
-      if (document.fonts && document.fonts.ready) {
-        try {
-          await document.fonts.ready;
-        } catch (_error) {}
-      }
-
-      const clone = document.documentElement.cloneNode(true);
-      inlineAll(document.documentElement, clone);
-
-      const removedNodes = clone.querySelectorAll("script,link[rel=\"stylesheet\"],style");
-      for (let index = 0; index < removedNodes.length; index += 1) {
-        removedNodes[index].remove();
-      }
-
-      stripExternal(clone);
-
-      // Re-embed web fonts as data-URI @font-face rules so the SVG rasterizer
-      // can resolve them — external font URLs aren't fetched during
-      // foreignObject rendering, which would otherwise force a fallback face
-      // and change text metrics.
-      const inlinedFontCss = await buildInlinedFontCss();
-      if (inlinedFontCss) {
-        const styleEl = document.createElement("style");
-        styleEl.textContent = inlinedFontCss;
-        const head = clone.querySelector("head");
-        if (head) head.appendChild(styleEl);
-        else clone.insertBefore(styleEl, clone.firstChild);
-      }
-
-      const html = new XMLSerializer().serializeToString(clone);
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
-        '<foreignObject width="100%" height="100%">' +
-        `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">` +
-        `<div style="position:relative;left:-${scrollX}px;top:-${scrollY}px">` +
-        html +
-        "</div></div></foreignObject></svg>";
-      const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-      const image = new Image();
-      image.onload = function () {
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext("2d").drawImage(image, 0, 0);
-        postResult(canvas.toDataURL("image/png"));
-      };
-      image.onerror = function () {
-        postResult(null);
-      };
-      image.src = svgUrl;
-    } catch (_error) {
-      postResult(null);
-    }
-  }
-
-  window.addEventListener("message", function (event) {
-    if (!event.data) return;
-    // Only accept messages from the direct parent frame. Blocks sibling /
-    // unrelated-window postMessage senders that could otherwise reach us.
-    if (event.source !== window.parent) return;
-
-    const trustedParentOrigin = getTrustedParentOrigin(event);
-    if (!trustedParentOrigin) return;
-    trustedTopOrigin = trustedParentOrigin;
-
-    if (event.data.type === "INLINE_EDIT_SCROLL_START") {
-      scrollForwarding = true;
-      emitScroll();
-      return;
-    }
-
-    if (event.data.type === "INLINE_EDIT_SCROLL_STOP") {
-      scrollForwarding = false;
-      if (scrollRaf) cancelAnimationFrame(scrollRaf);
-      scrollRaf = 0;
-      return;
-    }
-
-    if (event.data.type !== "INLINE_EDIT_CAPTURE_REQUEST") return;
-
-    handleCaptureRequest(event);
-  });
-})();
-</script>
 <script>
-(function() {
+/* ── PDF download button ──────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
   function getJsPDF() { return window.jspdf && window.jspdf.jsPDF; }
 
-  // ── Inject "Скачать PDF" button ─────────────────────────────────────────
+  /* Inject "Скачать PDF" button next to the reset button */
   function injectPdfButton() {
     if (document.querySelector('[data-testid="button-download-pdf"]')) return;
-    const resetBtn = Array.from(document.querySelectorAll('button')).find(
-      b => b.textContent.trim().includes('Сбросить настройки макета')
-    );
+    var resetBtn = Array.from(document.querySelectorAll('button')).find(function (b) {
+      return b.textContent.trim().includes('Сбросить настройки макета');
+    });
     if (!resetBtn) return;
 
-    const pdfBtn = resetBtn.cloneNode(false);
+    /* Create a fresh button — don't cloneNode to avoid copying event listeners */
+    var pdfBtn = document.createElement('button');
     pdfBtn.setAttribute('data-testid', 'button-download-pdf');
     pdfBtn.type = 'button';
+    pdfBtn.className = resetBtn.className;
     pdfBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"' +
+      ' stroke="currentColor" stroke-width="2" stroke-linecap="round"' +
+      ' stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"' +
+      ' aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+      '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
       '<span>Скачать PDF</span>';
     pdfBtn.style.cssText += ';display:inline-flex;align-items:center;gap:6px;';
     pdfBtn.addEventListener('click', generatePDF);
     resetBtn.parentNode.insertBefore(pdfBtn, resetBtn.nextSibling);
   }
 
-  new MutationObserver(injectPdfButton).observe(document.body, { childList: true, subtree: true });
+  var pdfObserver = new MutationObserver(injectPdfButton);
+  pdfObserver.observe(document.body, { childList: true, subtree: true });
 
-  // ── PDF generation ───────────────────────────────────────────────────────
+  /* PDF generation */
   function generatePDF() {
-    if (!getJsPDF())        { alert('jsPDF не загружен');       return; }
-    if (!window.html2canvas){ alert('html2canvas не загружен'); return; }
+    if (!getJsPDF())         { alert('jsPDF не загружен');       return; }
+    if (!window.html2canvas) { alert('html2canvas не загружен'); return; }
 
-    const printEl = document.getElementById('print-root');
+    var printEl = document.getElementById('print-root');
     if (!printEl) { alert('Элемент print-root не найден'); return; }
 
-    // Physical label size
-    let physW = 58, physH = 40;
-    const m = document.body.innerText.match(/Физический размер[:\s]+(\d+)[×x×](\d+)\s*мм/i);
+    /* Physical label size — supports ×, x, X, кириллические х/Х */
+    var physW = 58, physH = 40;
+    var m = document.body.innerText.match(
+      /Физический размер[:\s]+(\d+)\s*[×xXхХ\u00D7]\s*(\d+)\s*мм/i
+    );
     if (m) { physW = +m[1]; physH = +m[2]; }
 
-    // Natural pixel dimensions at scale=1
-    const naturalW = parseFloat(printEl.style.width)  || printEl.scrollWidth;
-    const naturalH = parseFloat(printEl.style.height) || printEl.scrollHeight;
+    var naturalW = parseFloat(printEl.style.width)  || printEl.scrollWidth;
+    var naturalH = parseFloat(printEl.style.height) || printEl.scrollHeight;
 
-    // Clone the element into an isolated off-screen container
-    // so html2canvas sees it at position (0,0) with no clipping
-    const wrapper = document.createElement('div');
+    var wrapper = document.createElement('div');
     wrapper.style.cssText = [
-      'position:fixed',
-      'left:-99999px',
-      'top:0',
-      'width:' + naturalW + 'px',
+      'position:fixed', 'left:-99999px', 'top:0',
+      'width:'  + naturalW + 'px',
       'height:' + naturalH + 'px',
-      'overflow:visible',
-      'background:#fff',
-      'z-index:-1',
+      'overflow:visible', 'background:#fff', 'z-index:-1'
     ].join(';');
 
-    const clone = printEl.cloneNode(true);
+    var clone = printEl.cloneNode(true);
     clone.style.cssText = [
-      'position:relative',
-      'left:0',
-      'top:0',
-      'width:' + naturalW + 'px',
+      'position:relative', 'left:0', 'top:0',
+      'width:'  + naturalW + 'px',
       'height:' + naturalH + 'px',
-      'transform:none',
-      'transform-origin:top left',
-      'overflow:visible',
-      'box-shadow:none',
-      'border:none',
-      'border-radius:0',
-      'background:#fff',
-      'font-family:Inter,system-ui,-apple-system,sans-serif',
+      'transform:none', 'transform-origin:top left',
+      'overflow:visible', 'box-shadow:none', 'border:none',
+      'border-radius:0', 'background:#fff',
+      'font-family:Inter,system-ui,-apple-system,sans-serif'
     ].join(';');
 
-    // Hide safezone dashes in clone
-    const sz = clone.querySelector('.label-safezone');
+    var sz = clone.querySelector('.label-safezone');
     if (sz) sz.style.display = 'none';
 
-    // Make all overflow:hidden children visible in clone
-    clone.querySelectorAll('*').forEach(function(el) {
-      const cs = getComputedStyle(el);
+    clone.querySelectorAll('*').forEach(function (el) {
+      var cs = getComputedStyle(el);
       if (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden') {
         el.style.overflow = 'visible';
       }
-      // Remove webkit line clamp that truncates text
       if (cs.webkitLineClamp && cs.webkitLineClamp !== 'none') {
         el.style.webkitLineClamp = 'unset';
         el.style.display = 'block';
@@ -438,164 +116,168 @@
     document.body.appendChild(wrapper);
 
     html2canvas(clone, {
-      scale: 6,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: '#ffffff',
-      logging: false,
-      width:  naturalW,
-      height: naturalH,
-      x: 0,
-      y: 0,
-    }).then(function(canvas) {
+      scale: 6, useCORS: true, allowTaint: true,
+      backgroundColor: '#ffffff', logging: false,
+      width: naturalW, height: naturalH, x: 0, y: 0
+    }).then(function (canvas) {
       document.body.removeChild(wrapper);
-
-      const imgData = canvas.toDataURL('image/png');
-      const doc = new (getJsPDF())({
+      var imgData = canvas.toDataURL('image/png');
+      var doc = new (getJsPDF())({
         orientation: physW >= physH ? 'landscape' : 'portrait',
         unit: 'mm',
-        format: [physW, physH],
+        format: [physW, physH]
       });
       doc.addImage(imgData, 'PNG', 0, 0, physW, physH);
       doc.save('label.pdf');
-    }).catch(function(err) {
+    }).catch(function (err) {
       document.body.removeChild(wrapper);
       console.error(err);
       alert('Ошибка PDF: ' + err.message);
     });
   }
-})();
+}());
 </script>
 
 <script>
-// ── Simple CSS-based controls that React can't override ────────────────────
-(function() {
+/* ── Extra CSS-variable sliders (font size + code offsets) ────────────────── */
+(function () {
+  'use strict';
+
   var injected = false;
 
-  function injectCSSControls() {
-    if (injected) return;
-    
-    // Find typography section
-    var offsetYSlider = document.querySelector('[data-testid="slider-print-offset-y"]');
-    if (!offsetYSlider) return;
+  /* Default values — used for reset */
+  var DEFAULTS = {
+    '--codes-offset-x':   0,
+    '--barcode-offset-x': 0,
+    '--qr-offset-x':      0,
+    '--title-font-scale': 1,
+    '--meta-font-scale':  1,
+    '--store-font-scale': 1
+  };
 
-    var rowEl = offsetYSlider.parentElement;
-    while (rowEl && !rowEl.parentElement.className.includes('space-y')) {
-      rowEl = rowEl.parentElement;
-    }
-    if (!rowEl) return;
+  /* Inject CSS overrides once */
+  var style = document.createElement('style');
+  style.id = 'label-overrides';
+  style.textContent =
+    ':root{' +
+      '--codes-offset-x:0px;--barcode-offset-x:0px;--qr-offset-x:0px;' +
+      '--title-font-scale:1;--meta-font-scale:1;--store-font-scale:1' +
+    '}' +
+    '[data-testid="preview-code-stack"]{transform:translateX(var(--codes-offset-x)) !important}' +
+    '[data-testid="preview-code-stack"]>*:first-child{transform:translateX(var(--barcode-offset-x)) !important}' +
+    '[data-testid="preview-code-stack"]>*:last-child{transform:translateX(var(--qr-offset-x)) !important}' +
+    '[data-testid="preview-title"]{font-size:calc(1em * var(--title-font-scale)) !important}' +
+    '[data-testid="preview-inventory"],[data-testid="preview-serial"]{font-size:calc(1em * var(--meta-font-scale)) !important}' +
+    '[data-testid="preview-store"]{font-size:calc(1em * var(--store-font-scale)) !important}';
+  document.head.appendChild(style);
 
-    // Add CSS variables for overrides
-    var style = document.createElement('style');
-    style.id = 'label-overrides';
-    style.textContent = `
-      :root {
-        --codes-offset-x: 0px;
-        --barcode-offset-x: 0px;
-        --qr-offset-x: 0px;
-        --title-font-scale: 1;
-        --meta-font-scale: 1;
-        --store-font-scale: 1;
-      }
-      [data-testid="preview-code-stack"] {
-        transform: translateX(var(--codes-offset-x)) !important;
-      }
-      /* Individual barcode and QR positioning */
-      [data-testid="preview-code-stack"] > *:first-child {
-        transform: translateX(var(--barcode-offset-x)) !important;
-      }
-      [data-testid="preview-code-stack"] > *:last-child {
-        transform: translateX(var(--qr-offset-x)) !important;
-      }
-      [data-testid="preview-title"] {
-        font-size: calc(1em * var(--title-font-scale)) !important;
-      }
-      [data-testid="preview-inventory"],
-      [data-testid="preview-serial"] {
-        font-size: calc(1em * var(--meta-font-scale)) !important;
-      }
-      [data-testid="preview-store"] {
-        font-size: calc(1em * var(--store-font-scale)) !important;
-      }
-    `;
-    document.head.appendChild(style);
+  /* Track all slider inputs for reset */
+  var sliderRegistry = [];
 
-    // Simple sliders that just update CSS variables
-    function createSimpleSlider(label, cssVar, min, max, step, suffix, defaultVal) {
-      var wrap = document.createElement('div');
-      
-      var header = document.createElement('div');
-      header.className = 'flex items-center justify-between mb-2';
-      
-      var lbl = document.createElement('label');
-      lbl.className = 'text-xs text-muted-foreground';
-      lbl.textContent = label;
-      
-      var valSpan = document.createElement('span');
-      valSpan.className = 'text-[11px] font-mono text-foreground tabular-nums';
-      valSpan.textContent = defaultVal + suffix;
-      
-      header.appendChild(lbl);
-      header.appendChild(valSpan);
-      
-      var slider = document.createElement('input');
-      slider.type = 'range';
-      slider.min = min;
-      slider.max = max;
-      slider.step = step;
-      slider.value = defaultVal;
-      slider.style.cssText = 'width:100%;accent-color:hsl(var(--primary,174 100% 22%));cursor:pointer;height:4px;';
-      
-      slider.addEventListener('input', function() {
-        var val = parseFloat(this.value);
-        valSpan.textContent = val + suffix;
-        document.documentElement.style.setProperty(cssVar, val + (suffix === 'px' ? 'px' : ''));
-      });
-      
-      var footer = document.createElement('div');
-      footer.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground';
-      footer.innerHTML = '<span>' + min + '</span><span>' + max + '</span>';
-      
-      wrap.appendChild(header);
-      wrap.appendChild(slider);
-      wrap.appendChild(footer);
-      return wrap;
-    }
+  /* Reset CSS vars + slider positions on "Сбросить" or size-button click */
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var txt = btn.textContent.trim();
+    var isReset = txt.includes('Сбросить настройки макета');
+    var isSize  = (btn.getAttribute('data-testid') || '').startsWith('button-size-');
+    if (!isReset && !isSize) return;
 
-    // Only show codes offset for landscape layouts
-    var surface = document.querySelector('[data-testid="preview-label-surface"]');
-    var isLandscape = surface && surface.offsetWidth > surface.offsetHeight;
+    Object.keys(DEFAULTS).forEach(function (v) {
+      var val = DEFAULTS[v];
+      document.documentElement.style.setProperty(v, val + (v.includes('offset') ? 'px' : ''));
+    });
+    sliderRegistry.forEach(function (s) {
+      s.input.value = s.def;
+      s.span.textContent = s.def + s.suffix;
+    });
+  }, true);
 
-    if (isLandscape) {
-      var codesSlider = createSimpleSlider('Сдвиг кодов X', '--codes-offset-x', -100, 100, 1, 'px', 0);
-      var barcodeSlider = createSimpleSlider('Сдвиг штрихкода', '--barcode-offset-x', -50, 50, 1, 'px', 0);
-      var qrSlider = createSimpleSlider('Сдвиг QR кода', '--qr-offset-x', -50, 50, 1, 'px', 0);
-      
-      rowEl.parentElement.insertBefore(codesSlider, rowEl.nextSibling);
-      rowEl.parentElement.insertBefore(barcodeSlider, codesSlider.nextSibling);
-      rowEl.parentElement.insertBefore(qrSlider, barcodeSlider.nextSibling);
-    }
+  /* Build a single slider row */
+  function makeSlider(label, cssVar, min, max, step, def, suffix) {
+    var wrap = document.createElement('div');
 
-    var titleSlider = createSimpleSlider('Размер заголовка', '--title-font-scale', 0.5, 2, 0.05, '×', 1);
-    var metaSlider = createSimpleSlider('Размер инв/S/N', '--meta-font-scale', 0.5, 2, 0.05, '×', 1);
-    var storeSlider = createSimpleSlider('Размер магазина', '--store-font-scale', 0.5, 2, 0.05, '×', 1);
+    var hdr = document.createElement('div');
+    hdr.className = 'flex items-center justify-between mb-2';
 
-    // Insert font sliders after the last inserted element
-    var lastInserted = rowEl.nextSibling;
-    if (isLandscape) {
-      // Skip the 3 code sliders we just inserted
-      lastInserted = lastInserted.nextSibling.nextSibling.nextSibling;
-    }
+    var lbl = document.createElement('label');
+    lbl.className = 'text-xs text-muted-foreground';
+    lbl.textContent = label;
 
-    rowEl.parentElement.insertBefore(titleSlider, lastInserted);
-    rowEl.parentElement.insertBefore(metaSlider, titleSlider.nextSibling);
-    rowEl.parentElement.insertBefore(storeSlider, metaSlider.nextSibling);
+    var span = document.createElement('span');
+    span.className = 'text-[11px] font-mono text-foreground tabular-nums';
+    span.textContent = def + suffix;
 
-    injected = true;
+    hdr.appendChild(lbl);
+    hdr.appendChild(span);
+
+    var input = document.createElement('input');
+    input.type  = 'range';
+    input.min   = min;
+    input.max   = max;
+    input.step  = step;
+    input.value = def;
+    input.style.cssText = 'width:100%;accent-color:hsl(var(--primary,174 100% 22%));cursor:pointer;';
+
+    input.addEventListener('input', function () {
+      var v = parseFloat(this.value);
+      span.textContent = v + suffix;
+      document.documentElement.style.setProperty(cssVar, v + (suffix === 'px' ? 'px' : ''));
+    });
+
+    sliderRegistry.push({ input: input, span: span, def: def, suffix: suffix, cssVar: cssVar });
+
+    var ftr = document.createElement('div');
+    ftr.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground';
+    ftr.innerHTML = '<span>' + min + '</span><span>' + max + '</span>';
+
+    wrap.appendChild(hdr);
+    wrap.appendChild(input);
+    wrap.appendChild(ftr);
+    return wrap;
   }
 
-  var obs = new MutationObserver(injectCSSControls);
+  /* Find the safe-margin slider row and inject after it */
+  function injectSliders() {
+    if (injected) return;
+
+    var safeSlider = document.querySelector('[data-testid="slider-safe-margin"]');
+    if (!safeSlider) return;
+
+    /* Walk up to the direct child of the space-y container */
+    var anchor = safeSlider;
+    for (var i = 0; i < 6; i++) {
+      if (!anchor.parentElement) return;
+      var parentClass = anchor.parentElement.getAttribute('class') || '';
+      if (parentClass.indexOf('space-y') !== -1) break;
+      anchor = anchor.parentElement;
+    }
+    if (!anchor || !anchor.parentElement) return;
+
+    var container = anchor.parentElement;
+    /* Insert before the safe-zone toggle (next sibling of anchor) */
+    var insertBefore = anchor.nextSibling;
+
+    var sliders = [
+      makeSlider('Сдвиг кодов X',    '--codes-offset-x',   -100, 100, 1,    0,    'px'),
+      makeSlider('Сдвиг штрихкода',  '--barcode-offset-x',  -80,  80, 1,    0,    'px'),
+      makeSlider('Сдвиг QR кода',    '--qr-offset-x',       -80,  80, 1,    0,    'px'),
+      makeSlider('Размер заголовка', '--title-font-scale',  0.2,   2, 0.05, 1,    '×'),
+      makeSlider('Размер инв/S/N',   '--meta-font-scale',   0.2,   2, 0.05, 1,    '×'),
+      makeSlider('Размер магазина',  '--store-font-scale',  0.2,   2, 0.05, 1,    '×')
+    ];
+
+    sliders.forEach(function (s) {
+      container.insertBefore(s, insertBefore);
+    });
+
+    injected = true;
+    obs.disconnect(); /* no longer needed */
+  }
+
+  var obs = new MutationObserver(injectSliders);
   obs.observe(document.body, { childList: true, subtree: true });
-})();
-</script></body>
+}());
+</script>
+</body>
 </html>
