@@ -348,8 +348,6 @@
 (function() {
   function getJsPDF() { return window.jspdf && window.jspdf.jsPDF; }
 
-  // ── "Сохранить" остаётся оригинальным (JSON) — перехват убран ──────────
-
   // ── Inject "Скачать PDF" button ─────────────────────────────────────────
   function injectPdfButton() {
     if (document.querySelector('[data-testid="button-download-pdf"]')) return;
@@ -365,85 +363,85 @@
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
       '<span>Скачать PDF</span>';
     pdfBtn.style.cssText += ';display:inline-flex;align-items:center;gap:6px;';
-    pdfBtn.addEventListener('click', function() { generatePDF(); });
+    pdfBtn.addEventListener('click', generatePDF);
     resetBtn.parentNode.insertBefore(pdfBtn, resetBtn.nextSibling);
   }
 
-  const _obs = new MutationObserver(injectPdfButton);
-  _obs.observe(document.body, { childList: true, subtree: true });
+  new MutationObserver(injectPdfButton).observe(document.body, { childList: true, subtree: true });
 
-  // ── PDF generation ───────────────────────────────────────────────────────
+  // ── PDF generation using print-root (same element used by browser print) ─
   function generatePDF() {
-    if (!getJsPDF())       { alert('jsPDF не загружен');       return; }
+    if (!getJsPDF())        { alert('jsPDF не загружен');       return; }
     if (!window.html2canvas){ alert('html2canvas не загружен'); return; }
 
-    const el = document.querySelector('[data-testid="preview-label-surface"]');
-    if (!el) { alert('Элемент предпросмотра не найден'); return; }
+    // #print-root is the element rendered at 1:1 scale for printing
+    const printEl = document.getElementById('print-root');
+    if (!printEl) { alert('Элемент print-root не найден'); return; }
 
-    // Read physical size from header text "Физический размер: 58×40 мм"
-    let physW = 0, physH = 0;
+    // Physical label size from header "Физический размер: 58×40 мм"
+    let physW = 58, physH = 40;
     const m = document.body.innerText.match(/Физический размер[:\s]+(\d+)[×x×](\d+)\s*мм/i);
     if (m) { physW = +m[1]; physH = +m[2]; }
 
-    // ── Temporarily neutralise transform & overflow so html2canvas
-    //    captures the full element at its natural (scale=1) pixel size ──
-    const origTransform  = el.style.transform;
-    const origOverflow   = el.style.overflow;
-    const origTOrigin    = el.style.transformOrigin;
+    // Natural pixel size of the element (no transform applied)
+    const naturalW = parseFloat(printEl.style.width)  || printEl.offsetWidth;
+    const naturalH = parseFloat(printEl.style.height) || printEl.offsetHeight;
 
-    // Compute natural (unscaled) pixel dimensions from inline style
-    // The element has style width/height set in px at scale=1
-    const naturalW = parseFloat(el.style.width)  || el.offsetWidth;
-    const naturalH = parseFloat(el.style.height) || el.offsetHeight;
+    // Apply print-equivalent styles temporarily
+    const saved = {
+      transform:       printEl.style.transform,
+      transformOrigin: printEl.style.transformOrigin,
+      overflow:        printEl.style.overflow,
+      boxShadow:       printEl.style.boxShadow,
+      border:          printEl.style.border,
+      borderRadius:    printEl.style.borderRadius,
+      position:        printEl.style.position,
+      left:            printEl.style.left,
+      top:             printEl.style.top,
+    };
 
-    el.style.transform       = 'none';
-    el.style.transformOrigin = 'top left';
-    el.style.overflow        = 'visible';
-
-    // Also unhide overflow on the inner content div
-    const innerDivs = el.querySelectorAll('div');
-    const savedOverflows = [];
-    innerDivs.forEach(function(d) {
-      savedOverflows.push(d.style.overflow);
-      if (getComputedStyle(d).overflow === 'hidden') d.style.overflow = 'visible';
+    Object.assign(printEl.style, {
+      transform:       'none',
+      transformOrigin: 'top left',
+      overflow:        'visible',
+      boxShadow:       'none',
+      border:          'none',
+      borderRadius:    '0',
+      position:        'fixed',
+      left:            '0',
+      top:             '0',
     });
 
-    html2canvas(el, {
-      scale: 4,
+    // Also make safezone invisible (as in print CSS)
+    const safeZone = printEl.querySelector('.label-safezone');
+    const savedSZDisplay = safeZone ? safeZone.style.display : null;
+    if (safeZone) safeZone.style.display = 'none';
+
+    html2canvas(printEl, {
+      scale: 8,           // high DPI — 8x for crisp barcodes
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#ffffff',
       logging: false,
       width:  naturalW,
       height: naturalH,
-      windowWidth:  naturalW,
-      windowHeight: naturalH,
     }).then(function(canvas) {
-      // Restore styles
-      el.style.transform       = origTransform;
-      el.style.transformOrigin = origTOrigin;
-      el.style.overflow        = origOverflow;
-      innerDivs.forEach(function(d, i) { d.style.overflow = savedOverflows[i]; });
+      // Restore
+      Object.assign(printEl.style, saved);
+      if (safeZone) safeZone.style.display = savedSZDisplay;
 
       const imgData = canvas.toDataURL('image/png');
-
-      // PDF page = physical label size (no extra margin — printer handles it)
-      const pdfW = physW || 58;
-      const pdfH = physH || 40;
-
       const doc = new (getJsPDF())({
-        orientation: pdfW >= pdfH ? 'landscape' : 'portrait',
+        orientation: physW >= physH ? 'landscape' : 'portrait',
         unit: 'mm',
-        format: [pdfW, pdfH],
+        format: [physW, physH],
       });
-      doc.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+      doc.addImage(imgData, 'PNG', 0, 0, physW, physH);
       doc.save('label.pdf');
     }).catch(function(err) {
-      el.style.transform       = origTransform;
-      el.style.transformOrigin = origTOrigin;
-      el.style.overflow        = origOverflow;
-      innerDivs.forEach(function(d, i) { d.style.overflow = savedOverflows[i]; });
-      console.error('html2canvas error:', err);
+      Object.assign(printEl.style, saved);
+      if (safeZone) safeZone.style.display = savedSZDisplay;
+      console.error(err);
       alert('Ошибка PDF: ' + err.message);
     });
   }
