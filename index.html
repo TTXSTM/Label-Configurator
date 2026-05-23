@@ -468,122 +468,127 @@
 </script>
 
 <script>
-// ── Codes offset slider ────────────────────────────────────────────────────
+// ── Codes X offset slider injected into Typography section ─────────────────
 (function() {
   var offsetPx = 0;
+  var injected = false;
 
   function applyOffset(px) {
     offsetPx = px;
+    // Use translateX so it doesn't conflict with React's flex layout
     document.querySelectorAll('[data-testid="preview-code-stack"]').forEach(function(el) {
-      el.style.marginLeft = px + 'px';
+      el.style.transform = px === 0 ? '' : 'translateX(' + px + 'px)';
     });
   }
 
-  function getMaxOffset() {
+  // Compute bounds: how far codes can move before hitting safe zone edges
+  function getBounds() {
     var codeStack = document.querySelector('[data-testid="preview-code-stack"]');
     var safeZone  = document.querySelector('[data-testid="overlay-safezone"]');
     var surface   = document.querySelector('[data-testid="preview-label-surface"]');
     if (!codeStack || !surface) return { min: -200, max: 200 };
 
-    var codeRect    = codeStack.getBoundingClientRect();
-    var boundRect   = safeZone ? safeZone.getBoundingClientRect() : surface.getBoundingClientRect();
+    // Remove current transform to get natural position
+    var prevTransform = codeStack.style.transform;
+    codeStack.style.transform = '';
+    var codeRect  = codeStack.getBoundingClientRect();
+    var boundRect = safeZone ? safeZone.getBoundingClientRect() : surface.getBoundingClientRect();
+    codeStack.style.transform = prevTransform;
 
-    // How far can we move right before right edge of codes hits safe zone right
-    var maxRight = Math.floor(boundRect.right - codeRect.right);
-    // How far can we move left before left edge of codes hits safe zone left
-    var maxLeft  = Math.floor(boundRect.left  - codeRect.left);
-
-    return { min: maxLeft + offsetPx, max: maxRight + offsetPx };
+    return {
+      min: Math.floor(boundRect.left  - codeRect.left),
+      max: Math.floor(boundRect.right - codeRect.right),
+    };
   }
 
-  function injectSlider() {
-    if (document.getElementById('codes-offset-slider-wrap')) return;
-    var surface = document.querySelector('[data-testid="preview-label-surface"]');
-    if (!surface) return;
-
+  function buildSliderRow(labelText, value, min, max, step, suffix, onInput) {
+    // Matches the exact DOM structure of zn() component
     var wrap = document.createElement('div');
-    wrap.id = 'codes-offset-slider-wrap';
-    wrap.style.cssText = [
-      'display:flex',
-      'align-items:center',
-      'gap:10px',
-      'padding:8px 16px',
-      'background:var(--card,#fff)',
-      'border:1px solid hsl(var(--border,220 13% 91%))',
-      'border-radius:8px',
-      'margin-top:8px',
-      'font-size:12px',
-      'color:var(--foreground,#0a0a0a)',
-      'font-family:Inter,system-ui,sans-serif',
-    ].join(';');
 
-    var label = document.createElement('span');
-    label.style.cssText = 'white-space:nowrap;font-weight:600;flex-shrink:0;';
-    label.textContent = '← Коды →';
+    var header = document.createElement('div');
+    header.className = 'flex items-center justify-between mb-2';
+
+    var lbl = document.createElement('label');
+    lbl.className = 'text-xs text-muted-foreground';
+    lbl.textContent = labelText;
+
+    var valSpan = document.createElement('span');
+    valSpan.className = 'text-[11px] font-mono text-foreground tabular-nums';
+    valSpan.id = 'codes-offset-value';
+    valSpan.textContent = value.toFixed(0) + suffix;
+
+    header.appendChild(lbl);
+    header.appendChild(valSpan);
+
+    // Native range styled to match Radix slider appearance
+    var track = document.createElement('div');
+    track.style.cssText = 'position:relative;height:20px;display:flex;align-items:center;';
 
     var slider = document.createElement('input');
     slider.type  = 'range';
+    slider.min   = min;
+    slider.max   = max;
+    slider.step  = step;
+    slider.value = value;
     slider.id    = 'codes-offset-range';
-    slider.min   = '-300';
-    slider.max   = '300';
-    slider.value = '0';
-    slider.step  = '1';
-    slider.style.cssText = 'flex:1;accent-color:hsl(var(--primary,174 100% 22%));cursor:pointer;';
-
-    var valueLabel = document.createElement('span');
-    valueLabel.style.cssText = 'min-width:40px;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0;';
-    valueLabel.textContent = '0 px';
-
-    var resetBtn = document.createElement('button');
-    resetBtn.textContent = '↺';
-    resetBtn.title = 'Сбросить';
-    resetBtn.style.cssText = [
-      'border:1px solid hsl(var(--border,220 13% 91%))',
-      'background:transparent',
-      'border-radius:4px',
-      'padding:2px 7px',
+    slider.style.cssText = [
+      'width:100%',
+      'accent-color:hsl(var(--primary,174 100% 22%))',
       'cursor:pointer',
-      'font-size:14px',
-      'flex-shrink:0',
+      'height:4px',
     ].join(';');
 
     slider.addEventListener('input', function() {
-      var raw = parseInt(this.value, 10);
-      var bounds = getMaxOffset();
-      var clamped = Math.max(bounds.min, Math.min(bounds.max, raw));
+      var raw = parseFloat(this.value);
+      var b = getBounds();
+      var clamped = Math.max(b.min, Math.min(b.max, raw));
       if (clamped !== raw) this.value = clamped;
-      valueLabel.textContent = clamped + ' px';
-      applyOffset(clamped);
+      valSpan.textContent = clamped.toFixed(0) + suffix;
+      onInput(clamped);
     });
 
-    resetBtn.addEventListener('click', function() {
-      slider.value = 0;
-      valueLabel.textContent = '0 px';
-      applyOffset(0);
-    });
+    track.appendChild(slider);
 
-    wrap.appendChild(label);
-    wrap.appendChild(slider);
-    wrap.appendChild(valueLabel);
-    wrap.appendChild(resetBtn);
+    var footer = document.createElement('div');
+    footer.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground';
+    footer.innerHTML = '<span>' + min + '</span><span>' + max + '</span>';
 
-    // Insert right after the label surface scroll container
-    var container = surface.parentElement;
-    while (container && !container.parentElement.matches('section,[class*="space-y"],[class*="flex-col"]')) {
-      container = container.parentElement;
+    wrap.appendChild(header);
+    wrap.appendChild(track);
+    wrap.appendChild(footer);
+    return wrap;
+  }
+
+  function tryInject() {
+    if (injected) return;
+
+    // Find the print-offset-y slider container — insert after it
+    var offsetYSlider = document.querySelector('[data-testid="slider-print-offset-y"]');
+    if (!offsetYSlider) return;
+
+    // Walk up to the top-level row div (same level as other sliders)
+    var rowEl = offsetYSlider.parentElement;
+    while (rowEl && !rowEl.parentElement.className.includes('space-y')) {
+      rowEl = rowEl.parentElement;
     }
-    if (container && container.parentElement) {
-      container.parentElement.insertBefore(wrap, container.nextSibling);
-    }
+    if (!rowEl) return;
+
+    // Check not already injected
+    if (document.getElementById('codes-offset-range')) return;
+
+    var sliderRow = buildSliderRow('Сдвиг кодов X', 0, -150, 150, 1, ' px', applyOffset);
+    rowEl.parentElement.insertBefore(sliderRow, rowEl.nextSibling);
+    injected = true;
   }
 
   var obs = new MutationObserver(function() {
-    injectSlider();
-    // Re-apply offset if React re-renders reset it
+    tryInject();
+    // Re-apply offset if React re-renders reset the transform
     if (offsetPx !== 0) {
       var cs = document.querySelector('[data-testid="preview-code-stack"]');
-      if (cs && parseInt(cs.style.marginLeft || '0', 10) !== offsetPx) {
-        applyOffset(offsetPx);
+      if (cs) {
+        var cur = cs.style.transform;
+        if (!cur || !cur.includes(offsetPx + 'px')) applyOffset(offsetPx);
       }
     }
   });
