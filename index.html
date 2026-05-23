@@ -475,20 +475,61 @@
 
   function applyOffset(px) {
     offsetPx = px;
-    // Use translateX so it doesn't conflict with React's flex layout
-    var codeStacks = document.querySelectorAll('[data-testid="preview-code-stack"]');
-    console.log('Found code stacks:', codeStacks.length, 'applying offset:', px + 'px');
+    console.log('Applying offset:', px + 'px');
     
-    codeStacks.forEach(function(el) {
-      var currentTransform = el.style.transform || '';
-      // Remove any existing translateX and add new one
-      var newTransform = currentTransform.replace(/translateX\([^)]*\)/g, '').trim();
-      if (px !== 0) {
-        newTransform = newTransform ? newTransform + ' translateX(' + px + 'px)' : 'translateX(' + px + 'px)';
+    // Try multiple selectors to find the codes container
+    var selectors = [
+      '[data-testid="preview-code-stack"]',
+      '.preview-code-stack',
+      '[class*="code-stack"]',
+      '[class*="codes"]'
+    ];
+    
+    var found = false;
+    for (var i = 0; i < selectors.length; i++) {
+      var elements = document.querySelectorAll(selectors[i]);
+      if (elements.length > 0) {
+        console.log('Found', elements.length, 'elements with selector:', selectors[i]);
+        elements.forEach(function(el) {
+          var currentTransform = el.style.transform || '';
+          var newTransform = currentTransform.replace(/translateX\([^)]*\)/g, '').trim();
+          if (px !== 0) {
+            newTransform = newTransform ? newTransform + ' translateX(' + px + 'px)' : 'translateX(' + px + 'px)';
+          }
+          el.style.transform = newTransform;
+          el.style.setProperty('transform', newTransform, 'important');
+          console.log('Applied transform:', newTransform, 'to:', el);
+        });
+        found = true;
+        break;
       }
-      el.style.transform = newTransform;
-      console.log('Applied transform:', newTransform, 'to element:', el);
-    });
+    }
+    
+    if (!found) {
+      // Fallback: find by content (barcode + QR elements)
+      var barcodes = document.querySelectorAll('canvas, svg');
+      var codeContainer = null;
+      for (var i = 0; i < barcodes.length; i++) {
+        var parent = barcodes[i].parentElement;
+        if (parent && parent.children.length >= 2) {
+          // Likely contains both barcode and QR
+          codeContainer = parent;
+          break;
+        }
+      }
+      if (codeContainer) {
+        console.log('Found code container by content:', codeContainer);
+        var currentTransform = codeContainer.style.transform || '';
+        var newTransform = currentTransform.replace(/translateX\([^)]*\)/g, '').trim();
+        if (px !== 0) {
+          newTransform = newTransform ? newTransform + ' translateX(' + px + 'px)' : 'translateX(' + px + 'px)';
+        }
+        codeContainer.style.transform = newTransform;
+        codeContainer.style.setProperty('transform', newTransform, 'important');
+      } else {
+        console.log('No code container found');
+      }
+    }
   }
 
   // Compute bounds: how far codes can move before hitting safe zone edges
@@ -598,6 +639,28 @@
 
     var sliderRow = buildSliderRow('Сдвиг кодов X', 0, -150, 150, 1, ' px', applyOffset);
     
+    // Add font size sliders
+    var titleSizeRow = buildSliderRow('Размер заголовка', 100, 50, 200, 5, '%', function(val) {
+      document.documentElement.style.setProperty('--title-font-scale', val / 100);
+      document.querySelectorAll('[data-testid="preview-title"]').forEach(function(el) {
+        el.style.fontSize = 'calc(' + getComputedStyle(el).fontSize + ' * ' + (val / 100) + ')';
+      });
+    });
+    
+    var metaSizeRow = buildSliderRow('Размер инв/S/N', 100, 50, 200, 5, '%', function(val) {
+      document.documentElement.style.setProperty('--meta-font-scale', val / 100);
+      document.querySelectorAll('[data-testid="preview-inventory"], [data-testid="preview-serial"]').forEach(function(el) {
+        el.style.fontSize = 'calc(' + getComputedStyle(el).fontSize + ' * ' + (val / 100) + ')';
+      });
+    });
+    
+    var storeSizeRow = buildSliderRow('Размер магазина', 100, 50, 200, 5, '%', function(val) {
+      document.documentElement.style.setProperty('--store-font-scale', val / 100);
+      document.querySelectorAll('[data-testid="preview-store"]').forEach(function(el) {
+        el.style.fontSize = 'calc(' + getComputedStyle(el).fontSize + ' * ' + (val / 100) + ')';
+      });
+    });
+    
     // Disable if not row layout
     if (!isRowLayout) {
       var slider = sliderRow.querySelector('input[type="range"]');
@@ -614,6 +677,9 @@
     }
 
     rowEl.parentElement.insertBefore(sliderRow, rowEl.nextSibling);
+    rowEl.parentElement.insertBefore(titleSizeRow, sliderRow.nextSibling);
+    rowEl.parentElement.insertBefore(metaSizeRow, titleSizeRow.nextSibling);
+    rowEl.parentElement.insertBefore(storeSizeRow, metaSizeRow.nextSibling);
     injected = true;
   }
 
