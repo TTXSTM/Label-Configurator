@@ -588,13 +588,71 @@
     // Check not already injected
     if (document.getElementById('codes-offset-range')) return;
 
+    // Check if codes are in row layout (landscape) — only then show the slider
+    var codeStack = document.querySelector('[data-testid="preview-code-stack"]');
+    var isRowLayout = false;
+    if (codeStack) {
+      var cs = getComputedStyle(codeStack);
+      isRowLayout = cs.flexDirection === 'row';
+    }
+
     var sliderRow = buildSliderRow('Сдвиг кодов X', 0, -150, 150, 1, ' px', applyOffset);
+    
+    // Disable if not row layout
+    if (!isRowLayout) {
+      var slider = sliderRow.querySelector('input[type="range"]');
+      var label = sliderRow.querySelector('label');
+      if (slider) {
+        slider.disabled = true;
+        slider.style.opacity = '0.5';
+        slider.style.cursor = 'not-allowed';
+      }
+      if (label) {
+        label.style.opacity = '0.5';
+        label.title = 'Доступно только для альбомной ориентации';
+      }
+    }
+
     rowEl.parentElement.insertBefore(sliderRow, rowEl.nextSibling);
     injected = true;
   }
 
   var obs = new MutationObserver(function() {
     tryInject();
+    
+    // Update slider state based on current layout
+    var slider = document.getElementById('codes-offset-range');
+    var codeStack = document.querySelector('[data-testid="preview-code-stack"]');
+    if (slider && codeStack) {
+      var cs = getComputedStyle(codeStack);
+      var isRowLayout = cs.flexDirection === 'row';
+      var label = slider.parentElement.parentElement.querySelector('label');
+      
+      if (isRowLayout) {
+        slider.disabled = false;
+        slider.style.opacity = '1';
+        slider.style.cursor = 'pointer';
+        if (label) {
+          label.style.opacity = '1';
+          label.title = '';
+        }
+      } else {
+        slider.disabled = true;
+        slider.style.opacity = '0.5';
+        slider.style.cursor = 'not-allowed';
+        if (label) {
+          label.style.opacity = '0.5';
+          label.title = 'Доступно только для альбомной ориентации';
+        }
+        // Reset offset for portrait
+        if (offsetPx !== 0) {
+          slider.value = 0;
+          slider.parentElement.parentElement.querySelector('#codes-offset-value').textContent = '0 px';
+          applyOffset(0);
+        }
+      }
+    }
+    
     // Re-apply offset if React re-renders reset the transform
     if (offsetPx !== 0) {
       var cs = document.querySelector('[data-testid="preview-code-stack"]');
