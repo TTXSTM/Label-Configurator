@@ -476,8 +476,18 @@
   function applyOffset(px) {
     offsetPx = px;
     // Use translateX so it doesn't conflict with React's flex layout
-    document.querySelectorAll('[data-testid="preview-code-stack"]').forEach(function(el) {
-      el.style.transform = px === 0 ? '' : 'translateX(' + px + 'px)';
+    var codeStacks = document.querySelectorAll('[data-testid="preview-code-stack"]');
+    console.log('Found code stacks:', codeStacks.length, 'applying offset:', px + 'px');
+    
+    codeStacks.forEach(function(el) {
+      var currentTransform = el.style.transform || '';
+      // Remove any existing translateX and add new one
+      var newTransform = currentTransform.replace(/translateX\([^)]*\)/g, '').trim();
+      if (px !== 0) {
+        newTransform = newTransform ? newTransform + ' translateX(' + px + 'px)' : 'translateX(' + px + 'px)';
+      }
+      el.style.transform = newTransform;
+      console.log('Applied transform:', newTransform, 'to element:', el);
     });
   }
 
@@ -540,7 +550,9 @@
 
     slider.addEventListener('input', function() {
       var raw = parseFloat(this.value);
+      console.log('Slider input:', raw);
       var b = getBounds();
+      console.log('Bounds:', b);
       var clamped = Math.max(b.min, Math.min(b.max, raw));
       if (clamped !== raw) this.value = clamped;
       valSpan.textContent = clamped.toFixed(0) + suffix;
