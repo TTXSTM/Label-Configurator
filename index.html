@@ -468,266 +468,112 @@
 </script>
 
 <script>
-// ── Codes X offset slider injected into Typography section ─────────────────
+// ── Simple CSS-based controls that React can't override ────────────────────
 (function() {
-  var offsetPx = 0;
   var injected = false;
 
-  function applyOffset(px) {
-    offsetPx = px;
-    console.log('Applying offset:', px + 'px');
-    
-    // Try multiple selectors to find the codes container
-    var selectors = [
-      '[data-testid="preview-code-stack"]',
-      '.preview-code-stack',
-      '[class*="code-stack"]',
-      '[class*="codes"]'
-    ];
-    
-    var found = false;
-    for (var i = 0; i < selectors.length; i++) {
-      var elements = document.querySelectorAll(selectors[i]);
-      if (elements.length > 0) {
-        console.log('Found', elements.length, 'elements with selector:', selectors[i]);
-        elements.forEach(function(el) {
-          var currentTransform = el.style.transform || '';
-          var newTransform = currentTransform.replace(/translateX\([^)]*\)/g, '').trim();
-          if (px !== 0) {
-            newTransform = newTransform ? newTransform + ' translateX(' + px + 'px)' : 'translateX(' + px + 'px)';
-          }
-          el.style.transform = newTransform;
-          el.style.setProperty('transform', newTransform, 'important');
-          console.log('Applied transform:', newTransform, 'to:', el);
-        });
-        found = true;
-        break;
-      }
-    }
-    
-    if (!found) {
-      // Fallback: find by content (barcode + QR elements)
-      var barcodes = document.querySelectorAll('canvas, svg');
-      var codeContainer = null;
-      for (var i = 0; i < barcodes.length; i++) {
-        var parent = barcodes[i].parentElement;
-        if (parent && parent.children.length >= 2) {
-          // Likely contains both barcode and QR
-          codeContainer = parent;
-          break;
-        }
-      }
-      if (codeContainer) {
-        console.log('Found code container by content:', codeContainer);
-        var currentTransform = codeContainer.style.transform || '';
-        var newTransform = currentTransform.replace(/translateX\([^)]*\)/g, '').trim();
-        if (px !== 0) {
-          newTransform = newTransform ? newTransform + ' translateX(' + px + 'px)' : 'translateX(' + px + 'px)';
-        }
-        codeContainer.style.transform = newTransform;
-        codeContainer.style.setProperty('transform', newTransform, 'important');
-      } else {
-        console.log('No code container found');
-      }
-    }
-  }
-
-  // Compute bounds: how far codes can move before hitting safe zone edges
-  function getBounds() {
-    var codeStack = document.querySelector('[data-testid="preview-code-stack"]');
-    var safeZone  = document.querySelector('[data-testid="overlay-safezone"]');
-    var surface   = document.querySelector('[data-testid="preview-label-surface"]');
-    if (!codeStack || !surface) return { min: -200, max: 200 };
-
-    // Remove current transform to get natural position
-    var prevTransform = codeStack.style.transform;
-    codeStack.style.transform = '';
-    var codeRect  = codeStack.getBoundingClientRect();
-    var boundRect = safeZone ? safeZone.getBoundingClientRect() : surface.getBoundingClientRect();
-    codeStack.style.transform = prevTransform;
-
-    return {
-      min: Math.floor(boundRect.left  - codeRect.left),
-      max: Math.floor(boundRect.right - codeRect.right),
-    };
-  }
-
-  function buildSliderRow(labelText, value, min, max, step, suffix, onInput) {
-    // Matches the exact DOM structure of zn() component
-    var wrap = document.createElement('div');
-
-    var header = document.createElement('div');
-    header.className = 'flex items-center justify-between mb-2';
-
-    var lbl = document.createElement('label');
-    lbl.className = 'text-xs text-muted-foreground';
-    lbl.textContent = labelText;
-
-    var valSpan = document.createElement('span');
-    valSpan.className = 'text-[11px] font-mono text-foreground tabular-nums';
-    valSpan.id = 'codes-offset-value';
-    valSpan.textContent = value.toFixed(0) + suffix;
-
-    header.appendChild(lbl);
-    header.appendChild(valSpan);
-
-    // Native range styled to match Radix slider appearance
-    var track = document.createElement('div');
-    track.style.cssText = 'position:relative;height:20px;display:flex;align-items:center;';
-
-    var slider = document.createElement('input');
-    slider.type  = 'range';
-    slider.min   = min;
-    slider.max   = max;
-    slider.step  = step;
-    slider.value = value;
-    slider.id    = 'codes-offset-range';
-    slider.style.cssText = [
-      'width:100%',
-      'accent-color:hsl(var(--primary,174 100% 22%))',
-      'cursor:pointer',
-      'height:4px',
-    ].join(';');
-
-    slider.addEventListener('input', function() {
-      var raw = parseFloat(this.value);
-      console.log('Slider input:', raw);
-      var b = getBounds();
-      console.log('Bounds:', b);
-      var clamped = Math.max(b.min, Math.min(b.max, raw));
-      if (clamped !== raw) this.value = clamped;
-      valSpan.textContent = clamped.toFixed(0) + suffix;
-      onInput(clamped);
-    });
-
-    track.appendChild(slider);
-
-    var footer = document.createElement('div');
-    footer.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground';
-    footer.innerHTML = '<span>' + min + '</span><span>' + max + '</span>';
-
-    wrap.appendChild(header);
-    wrap.appendChild(track);
-    wrap.appendChild(footer);
-    return wrap;
-  }
-
-  function tryInject() {
+  function injectCSSControls() {
     if (injected) return;
-
-    // Find the print-offset-y slider container — insert after it
+    
+    // Find typography section
     var offsetYSlider = document.querySelector('[data-testid="slider-print-offset-y"]');
     if (!offsetYSlider) return;
 
-    // Walk up to the top-level row div (same level as other sliders)
     var rowEl = offsetYSlider.parentElement;
     while (rowEl && !rowEl.parentElement.className.includes('space-y')) {
       rowEl = rowEl.parentElement;
     }
     if (!rowEl) return;
 
-    // Check not already injected
-    if (document.getElementById('codes-offset-range')) return;
+    // Add CSS variables for overrides
+    var style = document.createElement('style');
+    style.id = 'label-overrides';
+    style.textContent = `
+      :root {
+        --codes-offset-x: 0px;
+        --title-font-scale: 1;
+        --meta-font-scale: 1;
+        --store-font-scale: 1;
+      }
+      [data-testid="preview-code-stack"] {
+        transform: translateX(var(--codes-offset-x)) !important;
+      }
+      [data-testid="preview-title"] {
+        font-size: calc(1em * var(--title-font-scale)) !important;
+      }
+      [data-testid="preview-inventory"],
+      [data-testid="preview-serial"] {
+        font-size: calc(1em * var(--meta-font-scale)) !important;
+      }
+      [data-testid="preview-store"] {
+        font-size: calc(1em * var(--store-font-scale)) !important;
+      }
+    `;
+    document.head.appendChild(style);
 
-    // Check if codes are in row layout (landscape) — only then show the slider
-    var codeStack = document.querySelector('[data-testid="preview-code-stack"]');
-    var isRowLayout = false;
-    if (codeStack) {
-      var cs = getComputedStyle(codeStack);
-      isRowLayout = cs.flexDirection === 'row';
+    // Simple sliders that just update CSS variables
+    function createSimpleSlider(label, cssVar, min, max, step, suffix, defaultVal) {
+      var wrap = document.createElement('div');
+      
+      var header = document.createElement('div');
+      header.className = 'flex items-center justify-between mb-2';
+      
+      var lbl = document.createElement('label');
+      lbl.className = 'text-xs text-muted-foreground';
+      lbl.textContent = label;
+      
+      var valSpan = document.createElement('span');
+      valSpan.className = 'text-[11px] font-mono text-foreground tabular-nums';
+      valSpan.textContent = defaultVal + suffix;
+      
+      header.appendChild(lbl);
+      header.appendChild(valSpan);
+      
+      var slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = min;
+      slider.max = max;
+      slider.step = step;
+      slider.value = defaultVal;
+      slider.style.cssText = 'width:100%;accent-color:hsl(var(--primary,174 100% 22%));cursor:pointer;height:4px;';
+      
+      slider.addEventListener('input', function() {
+        var val = parseFloat(this.value);
+        valSpan.textContent = val + suffix;
+        document.documentElement.style.setProperty(cssVar, val + (suffix === 'px' ? 'px' : ''));
+      });
+      
+      var footer = document.createElement('div');
+      footer.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground';
+      footer.innerHTML = '<span>' + min + '</span><span>' + max + '</span>';
+      
+      wrap.appendChild(header);
+      wrap.appendChild(slider);
+      wrap.appendChild(footer);
+      return wrap;
     }
 
-    var sliderRow = buildSliderRow('Сдвиг кодов X', 0, -150, 150, 1, ' px', applyOffset);
-    
-    // Add font size sliders
-    var titleSizeRow = buildSliderRow('Размер заголовка', 100, 50, 200, 5, '%', function(val) {
-      document.documentElement.style.setProperty('--title-font-scale', val / 100);
-      document.querySelectorAll('[data-testid="preview-title"]').forEach(function(el) {
-        el.style.fontSize = 'calc(' + getComputedStyle(el).fontSize + ' * ' + (val / 100) + ')';
-      });
-    });
-    
-    var metaSizeRow = buildSliderRow('Размер инв/S/N', 100, 50, 200, 5, '%', function(val) {
-      document.documentElement.style.setProperty('--meta-font-scale', val / 100);
-      document.querySelectorAll('[data-testid="preview-inventory"], [data-testid="preview-serial"]').forEach(function(el) {
-        el.style.fontSize = 'calc(' + getComputedStyle(el).fontSize + ' * ' + (val / 100) + ')';
-      });
-    });
-    
-    var storeSizeRow = buildSliderRow('Размер магазина', 100, 50, 200, 5, '%', function(val) {
-      document.documentElement.style.setProperty('--store-font-scale', val / 100);
-      document.querySelectorAll('[data-testid="preview-store"]').forEach(function(el) {
-        el.style.fontSize = 'calc(' + getComputedStyle(el).fontSize + ' * ' + (val / 100) + ')';
-      });
-    });
-    
-    // Disable if not row layout
-    if (!isRowLayout) {
-      var slider = sliderRow.querySelector('input[type="range"]');
-      var label = sliderRow.querySelector('label');
-      if (slider) {
-        slider.disabled = true;
-        slider.style.opacity = '0.5';
-        slider.style.cursor = 'not-allowed';
-      }
-      if (label) {
-        label.style.opacity = '0.5';
-        label.title = 'Доступно только для альбомной ориентации';
-      }
+    // Only show codes offset for landscape layouts
+    var surface = document.querySelector('[data-testid="preview-label-surface"]');
+    var isLandscape = surface && surface.offsetWidth > surface.offsetHeight;
+
+    if (isLandscape) {
+      var codesSlider = createSimpleSlider('Сдвиг кодов X', '--codes-offset-x', -100, 100, 1, 'px', 0);
+      rowEl.parentElement.insertBefore(codesSlider, rowEl.nextSibling);
     }
 
-    rowEl.parentElement.insertBefore(sliderRow, rowEl.nextSibling);
-    rowEl.parentElement.insertBefore(titleSizeRow, sliderRow.nextSibling);
-    rowEl.parentElement.insertBefore(metaSizeRow, titleSizeRow.nextSibling);
-    rowEl.parentElement.insertBefore(storeSizeRow, metaSizeRow.nextSibling);
+    var titleSlider = createSimpleSlider('Размер заголовка', '--title-font-scale', 0.5, 2, 0.05, '×', 1);
+    var metaSlider = createSimpleSlider('Размер инв/S/N', '--meta-font-scale', 0.5, 2, 0.05, '×', 1);
+    var storeSlider = createSimpleSlider('Размер магазина', '--store-font-scale', 0.5, 2, 0.05, '×', 1);
+
+    rowEl.parentElement.insertBefore(titleSlider, rowEl.nextSibling);
+    rowEl.parentElement.insertBefore(metaSlider, titleSlider.nextSibling);
+    rowEl.parentElement.insertBefore(storeSlider, metaSlider.nextSibling);
+
     injected = true;
   }
 
-  var obs = new MutationObserver(function() {
-    tryInject();
-    
-    // Update slider state based on current layout
-    var slider = document.getElementById('codes-offset-range');
-    var codeStack = document.querySelector('[data-testid="preview-code-stack"]');
-    if (slider && codeStack) {
-      var cs = getComputedStyle(codeStack);
-      var isRowLayout = cs.flexDirection === 'row';
-      var label = slider.parentElement.parentElement.querySelector('label');
-      
-      if (isRowLayout) {
-        slider.disabled = false;
-        slider.style.opacity = '1';
-        slider.style.cursor = 'pointer';
-        if (label) {
-          label.style.opacity = '1';
-          label.title = '';
-        }
-      } else {
-        slider.disabled = true;
-        slider.style.opacity = '0.5';
-        slider.style.cursor = 'not-allowed';
-        if (label) {
-          label.style.opacity = '0.5';
-          label.title = 'Доступно только для альбомной ориентации';
-        }
-        // Reset offset for portrait
-        if (offsetPx !== 0) {
-          slider.value = 0;
-          slider.parentElement.parentElement.querySelector('#codes-offset-value').textContent = '0 px';
-          applyOffset(0);
-        }
-      }
-    }
-    
-    // Re-apply offset if React re-renders reset the transform
-    if (offsetPx !== 0) {
-      var cs = document.querySelector('[data-testid="preview-code-stack"]');
-      if (cs) {
-        var cur = cs.style.transform;
-        if (!cur || !cur.includes(offsetPx + 'px')) applyOffset(offsetPx);
-      }
-    }
-  });
+  var obs = new MutationObserver(injectCSSControls);
   obs.observe(document.body, { childList: true, subtree: true });
 })();
 </script></body>
