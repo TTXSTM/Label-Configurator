@@ -491,12 +491,21 @@
     style.textContent = `
       :root {
         --codes-offset-x: 0px;
+        --barcode-offset-x: 0px;
+        --qr-offset-x: 0px;
         --title-font-scale: 1;
         --meta-font-scale: 1;
         --store-font-scale: 1;
       }
       [data-testid="preview-code-stack"] {
         transform: translateX(var(--codes-offset-x)) !important;
+      }
+      /* Individual barcode and QR positioning */
+      [data-testid="preview-code-stack"] > *:first-child {
+        transform: translateX(var(--barcode-offset-x)) !important;
+      }
+      [data-testid="preview-code-stack"] > *:last-child {
+        transform: translateX(var(--qr-offset-x)) !important;
       }
       [data-testid="preview-title"] {
         font-size: calc(1em * var(--title-font-scale)) !important;
@@ -559,14 +568,26 @@
 
     if (isLandscape) {
       var codesSlider = createSimpleSlider('Сдвиг кодов X', '--codes-offset-x', -100, 100, 1, 'px', 0);
+      var barcodeSlider = createSimpleSlider('Сдвиг штрихкода', '--barcode-offset-x', -50, 50, 1, 'px', 0);
+      var qrSlider = createSimpleSlider('Сдвиг QR кода', '--qr-offset-x', -50, 50, 1, 'px', 0);
+      
       rowEl.parentElement.insertBefore(codesSlider, rowEl.nextSibling);
+      rowEl.parentElement.insertBefore(barcodeSlider, codesSlider.nextSibling);
+      rowEl.parentElement.insertBefore(qrSlider, barcodeSlider.nextSibling);
     }
 
     var titleSlider = createSimpleSlider('Размер заголовка', '--title-font-scale', 0.5, 2, 0.05, '×', 1);
     var metaSlider = createSimpleSlider('Размер инв/S/N', '--meta-font-scale', 0.5, 2, 0.05, '×', 1);
     var storeSlider = createSimpleSlider('Размер магазина', '--store-font-scale', 0.5, 2, 0.05, '×', 1);
 
-    rowEl.parentElement.insertBefore(titleSlider, rowEl.nextSibling);
+    // Insert font sliders after the last inserted element
+    var lastInserted = rowEl.nextSibling;
+    if (isLandscape) {
+      // Skip the 3 code sliders we just inserted
+      lastInserted = lastInserted.nextSibling.nextSibling.nextSibling;
+    }
+
+    rowEl.parentElement.insertBefore(titleSlider, lastInserted);
     rowEl.parentElement.insertBefore(metaSlider, titleSlider.nextSibling);
     rowEl.parentElement.insertBefore(storeSlider, metaSlider.nextSibling);
 
