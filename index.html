@@ -362,6 +362,49 @@
     _origClick.call(this);
   };
 
+  // ── Inject "Скачать PDF" button ──────────────────────────────────────────
+  function injectPdfButton() {
+    // Already injected?
+    if (document.querySelector('[data-testid="button-download-pdf"]')) return;
+
+    // Find the reset button as anchor point
+    const resetBtn = Array.from(document.querySelectorAll('button')).find(
+      b => b.textContent.trim().includes('Сбросить настройки макета')
+    );
+    if (!resetBtn) return;
+
+    // Clone reset button styles exactly
+    const pdfBtn = resetBtn.cloneNode(false);
+    pdfBtn.setAttribute('data-testid', 'button-download-pdf');
+    pdfBtn.type = 'button';
+
+    // Icon (download arrow) + label
+    pdfBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+      '<span>Скачать PDF</span>';
+
+    // Match gap between icon and text
+    pdfBtn.style.display = 'inline-flex';
+    pdfBtn.style.alignItems = 'center';
+    pdfBtn.style.gap = '6px';
+
+    pdfBtn.addEventListener('click', function() {
+      generatePDFFromPreview('label', null);
+    });
+
+    // Insert after reset button
+    resetBtn.parentNode.insertBefore(pdfBtn, resetBtn.nextSibling);
+  }
+
+  // Watch for React to render the buttons
+  const observer = new MutationObserver(function() {
+    injectPdfButton();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  // Also try immediately in case already rendered
+  document.addEventListener('DOMContentLoaded', injectPdfButton);
+
+  // ── PDF generation ───────────────────────────────────────────────────────
   function generatePDFFromPreview(filename, blobUrl) {
     const jsPDF = getJsPDF();
     if (!jsPDF) {
@@ -373,16 +416,24 @@
       return;
     }
 
-    // The label preview surface rendered by React
     const previewEl = document.querySelector('[data-testid="preview-label-surface"]');
     if (!previewEl) {
       alert('Не удалось найти элемент предпросмотра');
-      URL.revokeObjectURL(blobUrl);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
       return;
     }
 
+    // Read physical label dimensions from the page header if available
+    // e.g. "Физический размер: 58×40 мм"
+    let physW = 0, physH = 0;
+    const sizeText = document.body.innerText.match(/Физический размер[:\s]+(\d+)[×x](\d+)\s*мм/i);
+    if (sizeText) {
+      physW = parseFloat(sizeText[1]);
+      physH = parseFloat(sizeText[2]);
+    }
+
     html2canvas(previewEl, {
-      scale: 3,
+      scale: 4,
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#ffffff',
@@ -390,19 +441,19 @@
     }).then(function(canvas) {
       const imgData = canvas.toDataURL('image/png');
 
-      // Match PDF page to the label's aspect ratio
-      const rect = previewEl.getBoundingClientRect();
-      const ratio = rect.width / rect.height;
-
-      // Fit within 200x280 mm keeping aspect ratio
+      // Use physical mm dimensions if found, otherwise derive from aspect ratio
       let pdfW, pdfH;
-      if (ratio >= 1) {
-        pdfW = 200; pdfH = 200 / ratio;
+      if (physW > 0 && physH > 0) {
+        pdfW = physW;
+        pdfH = physH;
       } else {
-        pdfH = 280; pdfW = 280 * ratio;
+        const rect = previewEl.getBoundingClientRect();
+        const ratio = rect.width / rect.height;
+        if (ratio >= 1) { pdfW = 200; pdfH = 200 / ratio; }
+        else             { pdfH = 280; pdfW = 280 * ratio; }
       }
 
-      const margin = 10;
+      const margin = 2; // 2mm margin around label
       const doc = new jsPDF({
         orientation: pdfW >= pdfH ? 'landscape' : 'portrait',
         unit: 'mm',
@@ -411,11 +462,11 @@
 
       doc.addImage(imgData, 'PNG', margin, margin, pdfW, pdfH);
       doc.save((filename || 'label') + '.pdf');
-      URL.revokeObjectURL(blobUrl);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
     }).catch(function(err) {
       console.error('html2canvas error:', err);
       alert('Ошибка при создании PDF: ' + err.message);
-      URL.revokeObjectURL(blobUrl);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
     });
   }
 })();
