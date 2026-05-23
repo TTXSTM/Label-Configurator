@@ -369,66 +369,86 @@
 
   new MutationObserver(injectPdfButton).observe(document.body, { childList: true, subtree: true });
 
-  // ── PDF generation using print-root (same element used by browser print) ─
+  // ── PDF generation ───────────────────────────────────────────────────────
   function generatePDF() {
     if (!getJsPDF())        { alert('jsPDF не загружен');       return; }
     if (!window.html2canvas){ alert('html2canvas не загружен'); return; }
 
-    // #print-root is the element rendered at 1:1 scale for printing
     const printEl = document.getElementById('print-root');
     if (!printEl) { alert('Элемент print-root не найден'); return; }
 
-    // Physical label size from header "Физический размер: 58×40 мм"
+    // Physical label size
     let physW = 58, physH = 40;
     const m = document.body.innerText.match(/Физический размер[:\s]+(\d+)[×x×](\d+)\s*мм/i);
     if (m) { physW = +m[1]; physH = +m[2]; }
 
-    // Natural pixel size of the element (no transform applied)
-    const naturalW = parseFloat(printEl.style.width)  || printEl.offsetWidth;
-    const naturalH = parseFloat(printEl.style.height) || printEl.offsetHeight;
+    // Natural pixel dimensions at scale=1
+    const naturalW = parseFloat(printEl.style.width)  || printEl.scrollWidth;
+    const naturalH = parseFloat(printEl.style.height) || printEl.scrollHeight;
 
-    // Apply print-equivalent styles temporarily
-    const saved = {
-      transform:       printEl.style.transform,
-      transformOrigin: printEl.style.transformOrigin,
-      overflow:        printEl.style.overflow,
-      boxShadow:       printEl.style.boxShadow,
-      border:          printEl.style.border,
-      borderRadius:    printEl.style.borderRadius,
-      position:        printEl.style.position,
-      left:            printEl.style.left,
-      top:             printEl.style.top,
-    };
+    // Clone the element into an isolated off-screen container
+    // so html2canvas sees it at position (0,0) with no clipping
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = [
+      'position:fixed',
+      'left:-99999px',
+      'top:0',
+      'width:' + naturalW + 'px',
+      'height:' + naturalH + 'px',
+      'overflow:visible',
+      'background:#fff',
+      'z-index:-1',
+    ].join(';');
 
-    Object.assign(printEl.style, {
-      transform:       'none',
-      transformOrigin: 'top left',
-      overflow:        'visible',
-      boxShadow:       'none',
-      border:          'none',
-      borderRadius:    '0',
-      position:        'fixed',
-      left:            '0',
-      top:             '0',
+    const clone = printEl.cloneNode(true);
+    clone.style.cssText = [
+      'position:relative',
+      'left:0',
+      'top:0',
+      'width:' + naturalW + 'px',
+      'height:' + naturalH + 'px',
+      'transform:none',
+      'transform-origin:top left',
+      'overflow:visible',
+      'box-shadow:none',
+      'border:none',
+      'border-radius:0',
+      'background:#fff',
+      'font-family:Inter,system-ui,-apple-system,sans-serif',
+    ].join(';');
+
+    // Hide safezone dashes in clone
+    const sz = clone.querySelector('.label-safezone');
+    if (sz) sz.style.display = 'none';
+
+    // Make all overflow:hidden children visible in clone
+    clone.querySelectorAll('*').forEach(function(el) {
+      const cs = getComputedStyle(el);
+      if (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden') {
+        el.style.overflow = 'visible';
+      }
+      // Remove webkit line clamp that truncates text
+      if (cs.webkitLineClamp && cs.webkitLineClamp !== 'none') {
+        el.style.webkitLineClamp = 'unset';
+        el.style.display = 'block';
+      }
     });
 
-    // Also make safezone invisible (as in print CSS)
-    const safeZone = printEl.querySelector('.label-safezone');
-    const savedSZDisplay = safeZone ? safeZone.style.display : null;
-    if (safeZone) safeZone.style.display = 'none';
+    wrapper.appendChild(clone);
+    document.body.appendChild(wrapper);
 
-    html2canvas(printEl, {
-      scale: 8,           // high DPI — 8x for crisp barcodes
+    html2canvas(clone, {
+      scale: 6,
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#ffffff',
       logging: false,
       width:  naturalW,
       height: naturalH,
+      x: 0,
+      y: 0,
     }).then(function(canvas) {
-      // Restore
-      Object.assign(printEl.style, saved);
-      if (safeZone) safeZone.style.display = savedSZDisplay;
+      document.body.removeChild(wrapper);
 
       const imgData = canvas.toDataURL('image/png');
       const doc = new (getJsPDF())({
@@ -439,8 +459,7 @@
       doc.addImage(imgData, 'PNG', 0, 0, physW, physH);
       doc.save('label.pdf');
     }).catch(function(err) {
-      Object.assign(printEl.style, saved);
-      if (safeZone) safeZone.style.display = savedSZDisplay;
+      document.body.removeChild(wrapper);
       console.error(err);
       alert('Ошибка PDF: ' + err.message);
     });
