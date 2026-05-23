@@ -346,127 +346,105 @@
 </script>
 <script>
 (function() {
-  function getJsPDF() {
-    return window.jspdf && window.jspdf.jsPDF;
-  }
+  function getJsPDF() { return window.jspdf && window.jspdf.jsPDF; }
 
-  // Intercept programmatic .click() on <a download="*.json"> elements
-  const _origClick = HTMLAnchorElement.prototype.click;
-  HTMLAnchorElement.prototype.click = function() {
-    if (this.download && this.download.endsWith('.json') && this.href && this.href.startsWith('blob:')) {
-      const blobUrl = this.href;
-      const filename = this.download.replace(/\.json$/, '');
-      generatePDFFromPreview(filename, blobUrl);
-      return;
-    }
-    _origClick.call(this);
-  };
+  // ── "Сохранить" остаётся оригинальным (JSON) — перехват убран ──────────
 
-  // ── Inject "Скачать PDF" button ──────────────────────────────────────────
+  // ── Inject "Скачать PDF" button ─────────────────────────────────────────
   function injectPdfButton() {
-    // Already injected?
     if (document.querySelector('[data-testid="button-download-pdf"]')) return;
-
-    // Find the reset button as anchor point
     const resetBtn = Array.from(document.querySelectorAll('button')).find(
       b => b.textContent.trim().includes('Сбросить настройки макета')
     );
     if (!resetBtn) return;
 
-    // Clone reset button styles exactly
     const pdfBtn = resetBtn.cloneNode(false);
     pdfBtn.setAttribute('data-testid', 'button-download-pdf');
     pdfBtn.type = 'button';
-
-    // Icon (download arrow) + label
     pdfBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
       '<span>Скачать PDF</span>';
-
-    // Match gap between icon and text
-    pdfBtn.style.display = 'inline-flex';
-    pdfBtn.style.alignItems = 'center';
-    pdfBtn.style.gap = '6px';
-
-    pdfBtn.addEventListener('click', function() {
-      generatePDFFromPreview('label', null);
-    });
-
-    // Insert after reset button
+    pdfBtn.style.cssText += ';display:inline-flex;align-items:center;gap:6px;';
+    pdfBtn.addEventListener('click', function() { generatePDF(); });
     resetBtn.parentNode.insertBefore(pdfBtn, resetBtn.nextSibling);
   }
 
-  // Watch for React to render the buttons
-  const observer = new MutationObserver(function() {
-    injectPdfButton();
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-  // Also try immediately in case already rendered
-  document.addEventListener('DOMContentLoaded', injectPdfButton);
+  const _obs = new MutationObserver(injectPdfButton);
+  _obs.observe(document.body, { childList: true, subtree: true });
 
   // ── PDF generation ───────────────────────────────────────────────────────
-  function generatePDFFromPreview(filename, blobUrl) {
-    const jsPDF = getJsPDF();
-    if (!jsPDF) {
-      alert('Ошибка: библиотека jsPDF не загружена');
-      return;
-    }
-    if (!window.html2canvas) {
-      alert('Ошибка: библиотека html2canvas не загружена');
-      return;
-    }
+  function generatePDF() {
+    if (!getJsPDF())       { alert('jsPDF не загружен');       return; }
+    if (!window.html2canvas){ alert('html2canvas не загружен'); return; }
 
-    const previewEl = document.querySelector('[data-testid="preview-label-surface"]');
-    if (!previewEl) {
-      alert('Не удалось найти элемент предпросмотра');
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-      return;
-    }
+    const el = document.querySelector('[data-testid="preview-label-surface"]');
+    if (!el) { alert('Элемент предпросмотра не найден'); return; }
 
-    // Read physical label dimensions from the page header if available
-    // e.g. "Физический размер: 58×40 мм"
+    // Read physical size from header text "Физический размер: 58×40 мм"
     let physW = 0, physH = 0;
-    const sizeText = document.body.innerText.match(/Физический размер[:\s]+(\d+)[×x](\d+)\s*мм/i);
-    if (sizeText) {
-      physW = parseFloat(sizeText[1]);
-      physH = parseFloat(sizeText[2]);
-    }
+    const m = document.body.innerText.match(/Физический размер[:\s]+(\d+)[×x×](\d+)\s*мм/i);
+    if (m) { physW = +m[1]; physH = +m[2]; }
 
-    html2canvas(previewEl, {
+    // ── Temporarily neutralise transform & overflow so html2canvas
+    //    captures the full element at its natural (scale=1) pixel size ──
+    const origTransform  = el.style.transform;
+    const origOverflow   = el.style.overflow;
+    const origTOrigin    = el.style.transformOrigin;
+
+    // Compute natural (unscaled) pixel dimensions from inline style
+    // The element has style width/height set in px at scale=1
+    const naturalW = parseFloat(el.style.width)  || el.offsetWidth;
+    const naturalH = parseFloat(el.style.height) || el.offsetHeight;
+
+    el.style.transform       = 'none';
+    el.style.transformOrigin = 'top left';
+    el.style.overflow        = 'visible';
+
+    // Also unhide overflow on the inner content div
+    const innerDivs = el.querySelectorAll('div');
+    const savedOverflows = [];
+    innerDivs.forEach(function(d) {
+      savedOverflows.push(d.style.overflow);
+      if (getComputedStyle(d).overflow === 'hidden') d.style.overflow = 'visible';
+    });
+
+    html2canvas(el, {
       scale: 4,
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#ffffff',
       logging: false,
+      width:  naturalW,
+      height: naturalH,
+      windowWidth:  naturalW,
+      windowHeight: naturalH,
     }).then(function(canvas) {
+      // Restore styles
+      el.style.transform       = origTransform;
+      el.style.transformOrigin = origTOrigin;
+      el.style.overflow        = origOverflow;
+      innerDivs.forEach(function(d, i) { d.style.overflow = savedOverflows[i]; });
+
       const imgData = canvas.toDataURL('image/png');
 
-      // Use physical mm dimensions if found, otherwise derive from aspect ratio
-      let pdfW, pdfH;
-      if (physW > 0 && physH > 0) {
-        pdfW = physW;
-        pdfH = physH;
-      } else {
-        const rect = previewEl.getBoundingClientRect();
-        const ratio = rect.width / rect.height;
-        if (ratio >= 1) { pdfW = 200; pdfH = 200 / ratio; }
-        else             { pdfH = 280; pdfW = 280 * ratio; }
-      }
+      // PDF page = physical label size (no extra margin — printer handles it)
+      const pdfW = physW || 58;
+      const pdfH = physH || 40;
 
-      const margin = 2; // 2mm margin around label
-      const doc = new jsPDF({
+      const doc = new (getJsPDF())({
         orientation: pdfW >= pdfH ? 'landscape' : 'portrait',
         unit: 'mm',
-        format: [pdfW + margin * 2, pdfH + margin * 2],
+        format: [pdfW, pdfH],
       });
-
-      doc.addImage(imgData, 'PNG', margin, margin, pdfW, pdfH);
-      doc.save((filename || 'label') + '.pdf');
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      doc.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+      doc.save('label.pdf');
     }).catch(function(err) {
+      el.style.transform       = origTransform;
+      el.style.transformOrigin = origTOrigin;
+      el.style.overflow        = origOverflow;
+      innerDivs.forEach(function(d, i) { d.style.overflow = savedOverflows[i]; });
       console.error('html2canvas error:', err);
-      alert('Ошибка при создании PDF: ' + err.message);
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      alert('Ошибка PDF: ' + err.message);
     });
   }
 })();
