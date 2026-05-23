@@ -33,6 +33,68 @@
 
   function getJsPDF() { return window.jspdf && window.jspdf.jsPDF; }
 
+  /* Intercept the React save-config click to inject our CSS-var fields.
+     We monkey-patch URL.createObjectURL once — when React calls it with a
+     Blob that looks like a label config JSON we enrich it before download. */
+  var _origCreateObjectURL = URL.createObjectURL.bind(URL);
+  URL.createObjectURL = function (blob) {
+    if (blob && blob.type === 'application/json') {
+      try {
+        var reader = new FileReaderSync ? new FileReaderSync() : null;
+        /* FileReaderSync is only available in Workers; use a sync XHR trick
+           instead — we replace the blob synchronously via a data URL. */
+        var url = _origCreateObjectURL(blob);
+        /* Async enrichment: fetch the blob, patch it, re-trigger download */
+        blob.text().then(function (text) {
+          try {
+            var cfg = JSON.parse(text);
+            /* Inject our CSS-variable values */
+            var root = document.documentElement;
+            cfg.lcCodesOffsetX   = parseFloat(root.style.getPropertyValue('--codes-offset-x'))   || 0;
+            cfg.lcBarcodeOffsetX = parseFloat(root.style.getPropertyValue('--barcode-offset-x')) || 0;
+            cfg.lcQrOffsetX      = parseFloat(root.style.getPropertyValue('--qr-offset-x'))      || 0;
+            cfg.lcTitleScale     = parseFloat(root.style.getPropertyValue('--title-font-scale'))  || 1;
+            cfg.lcMetaScale      = parseFloat(root.style.getPropertyValue('--meta-font-scale'))   || 1;
+            cfg.lcStoreScale     = parseFloat(root.style.getPropertyValue('--store-font-scale'))  || 1;
+
+            var enriched = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
+            var enrichedUrl = _origCreateObjectURL(enriched);
+
+            /* Find the <a> that React just clicked and re-click with new URL */
+            var a = document.querySelector('a[download*="label-config"]');
+            if (a) {
+              a.href = enrichedUrl;
+              a.click();
+              setTimeout(function () { URL.revokeObjectURL(enrichedUrl); }, 1000);
+            }
+          } catch (e) { /* ignore parse errors */ }
+        });
+        return url;
+      } catch (e) { /* fall through */ }
+    }
+    return _origCreateObjectURL(blob);
+  };
+
+  /* Intercept file load: after React parses the JSON, apply our fields */
+  document.addEventListener('change', function (e) {
+    var input = e.target;
+    if (!input || input.getAttribute('data-testid') !== 'input-load-config') return;
+    var file = input.files && input.files[0];
+    if (!file) return;
+    file.text().then(function (text) {
+      try {
+        var cfg = JSON.parse(text);
+        /* Apply our CSS-variable fields if present */
+        if (typeof cfg.lcCodesOffsetX   === 'number') window.__lcApplyVar('--codes-offset-x',   cfg.lcCodesOffsetX,   'px');
+        if (typeof cfg.lcBarcodeOffsetX === 'number') window.__lcApplyVar('--barcode-offset-x', cfg.lcBarcodeOffsetX, 'px');
+        if (typeof cfg.lcQrOffsetX      === 'number') window.__lcApplyVar('--qr-offset-x',      cfg.lcQrOffsetX,      'px');
+        if (typeof cfg.lcTitleScale     === 'number') window.__lcApplyVar('--title-font-scale',  cfg.lcTitleScale,     '');
+        if (typeof cfg.lcMetaScale      === 'number') window.__lcApplyVar('--meta-font-scale',   cfg.lcMetaScale,      '');
+        if (typeof cfg.lcStoreScale     === 'number') window.__lcApplyVar('--store-font-scale',  cfg.lcStoreScale,     '');
+      } catch (e) { /* ignore */ }
+    });
+  }, true);
+
   /* Inject "Скачать PDF" button next to the reset button */
   function injectPdfButton() {
     if (document.querySelector('[data-testid="button-download-pdf"]')) return;
@@ -41,7 +103,6 @@
     });
     if (!resetBtn) return;
 
-    /* Create a fresh button — don't cloneNode to avoid copying event listeners */
     var pdfBtn = document.createElement('button');
     pdfBtn.setAttribute('data-testid', 'button-download-pdf');
     pdfBtn.type = 'button';
@@ -69,7 +130,6 @@
     var printEl = document.getElementById('print-root');
     if (!printEl) { alert('Элемент print-root не найден'); return; }
 
-    /* Physical label size — supports ×, x, X, кириллические х/Х */
     var physW = 58, physH = 40;
     var m = document.body.innerText.match(
       /Физический размер[:\s]+(\d+)\s*[×xXхХ\u00D7]\s*(\d+)\s*мм/i
@@ -82,16 +142,14 @@
     var wrapper = document.createElement('div');
     wrapper.style.cssText = [
       'position:fixed', 'left:-99999px', 'top:0',
-      'width:'  + naturalW + 'px',
-      'height:' + naturalH + 'px',
+      'width:'  + naturalW + 'px', 'height:' + naturalH + 'px',
       'overflow:visible', 'background:#fff', 'z-index:-1'
     ].join(';');
 
     var clone = printEl.cloneNode(true);
     clone.style.cssText = [
       'position:relative', 'left:0', 'top:0',
-      'width:'  + naturalW + 'px',
-      'height:' + naturalH + 'px',
+      'width:'  + naturalW + 'px', 'height:' + naturalH + 'px',
       'transform:none', 'transform-origin:top left',
       'overflow:visible', 'box-shadow:none', 'border:none',
       'border-radius:0', 'background:#fff',
@@ -103,9 +161,8 @@
 
     clone.querySelectorAll('*').forEach(function (el) {
       var cs = getComputedStyle(el);
-      if (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden') {
+      if (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden')
         el.style.overflow = 'visible';
-      }
       if (cs.webkitLineClamp && cs.webkitLineClamp !== 'none') {
         el.style.webkitLineClamp = 'unset';
         el.style.display = 'block';
@@ -124,8 +181,7 @@
       var imgData = canvas.toDataURL('image/png');
       var doc = new (getJsPDF())({
         orientation: physW >= physH ? 'landscape' : 'portrait',
-        unit: 'mm',
-        format: [physW, physH]
+        unit: 'mm', format: [physW, physH]
       });
       doc.addImage(imgData, 'PNG', 0, 0, physW, physH);
       doc.save('label.pdf');
@@ -145,6 +201,36 @@
 
   var injected = false;
 
+  /* Per-size presets for the CSS-variable sliders.
+     Keys match data-testid="button-size-{id}" */
+  var SIZE_PRESETS = {
+    '58x40': {
+      '--codes-offset-x':   0,
+      '--barcode-offset-x': 13,
+      '--qr-offset-x':      -20,
+      '--title-font-scale': 0.60,
+      '--meta-font-scale':  0.60,
+      '--store-font-scale': 0.60
+    },
+    '32x25': {
+      '--codes-offset-x':   0,
+      '--barcode-offset-x': 7,
+      '--qr-offset-x':      -9,
+      '--title-font-scale': 0.35,
+      '--meta-font-scale':  0.25,
+      '--store-font-scale': 0.40
+    },
+    '58x60': {
+      '--codes-offset-x':   0,
+      '--barcode-offset-x': 0,
+      '--qr-offset-x':      0,
+      '--title-font-scale': 0.85,
+      '--meta-font-scale':  0.65,
+      '--store-font-scale': 0.60
+    }
+  };
+
+  /* Default (used for sizes without a preset: 100x150, 102x76) */
   var DEFAULTS = {
     '--codes-offset-x':   0,
     '--barcode-offset-x': 0,
@@ -153,6 +239,12 @@
     '--meta-font-scale':  1,
     '--store-font-scale': 1
   };
+
+  /* Currently active preset values (start with defaults) */
+  var activePreset = DEFAULTS;
+
+  /* Track the active size id */
+  var activeSizeId = null;
 
   /* CSS overrides */
   var style = document.createElement('style');
@@ -176,17 +268,47 @@
 
   var sliderRegistry = [];
 
-  /* Reset on "Сбросить" click */
+  /* Public helper used by the config-load interceptor above */
+  window.__lcApplyVar = function (cssVar, value, unit) {
+    document.documentElement.style.setProperty(cssVar, value + unit);
+    sliderRegistry.forEach(function (s) {
+      if (s.cssVar === cssVar) s.setVal(value);
+    });
+  };
+
+  /* Apply a preset object to all CSS vars and registered sliders */
+  function applyPreset(preset) {
+    activePreset = preset;
+    Object.keys(preset).forEach(function (v) {
+      var val = preset[v];
+      document.documentElement.style.setProperty(v, val + (v.includes('offset') ? 'px' : ''));
+    });
+    sliderRegistry.forEach(function (s) {
+      if (s.cssVar in preset) s.setVal(preset[s.cssVar]);
+    });
+  }
+
+  /* Reset on "Сбросить" or size-button click */
   document.addEventListener('click', function (e) {
     var btn = e.target.closest('button');
     if (!btn) return;
+    var testId  = btn.getAttribute('data-testid') || '';
     var isReset = btn.textContent.trim().includes('Сбросить настройки макета');
-    var isSize  = (btn.getAttribute('data-testid') || '').startsWith('button-size-');
-    if (!isReset && !isSize) return;
-    Object.keys(DEFAULTS).forEach(function (v) {
-      document.documentElement.style.setProperty(v, DEFAULTS[v] + (v.includes('offset') ? 'px' : ''));
-    });
-    sliderRegistry.forEach(function (s) { s.reset(); });
+    var isSize  = testId.startsWith('button-size-');
+
+    if (isSize) {
+      var sizeId  = testId.replace('button-size-', '');
+      activeSizeId = sizeId;
+      /* Apply after a tick so React has updated its own state first */
+      setTimeout(function () {
+        applyPreset(SIZE_PRESETS[sizeId] || DEFAULTS);
+      }, 50);
+      return;
+    }
+
+    if (isReset) {
+      applyPreset(SIZE_PRESETS[activeSizeId] || DEFAULTS);
+    }
   }, true);
 
   /* Build a slider that looks identical to the Radix UI sliders above it */
@@ -295,7 +417,7 @@
     wrap.appendChild(sliderEl);
     wrap.appendChild(ftr);
 
-    sliderRegistry.push({ reset: function () { setVal(def); } });
+    sliderRegistry.push({ reset: function () { setVal(def); }, setVal: setVal, cssVar: cssVar });
     return wrap;
   }
 
@@ -314,7 +436,7 @@
     }
     if (!anchor || !anchor.parentElement) return;
 
-    var container   = anchor.parentElement;
+    var container    = anchor.parentElement;
     var insertBefore = anchor.nextSibling;
 
     [
@@ -325,6 +447,13 @@
       makeSlider('Размер инв/S/N',   '--meta-font-scale',   0.2,    2, 0.05, 1, '×'),
       makeSlider('Размер магазина',  '--store-font-scale',  0.2,    2, 0.05, 1, '×')
     ].forEach(function (s) { container.insertBefore(s, insertBefore); });
+
+    /* Detect which size is currently active and apply its preset */
+    var activeBtn = document.querySelector('[data-testid^="button-size-"][class*="border-primary"]');
+    if (activeBtn) {
+      activeSizeId = activeBtn.getAttribute('data-testid').replace('button-size-', '');
+      if (SIZE_PRESETS[activeSizeId]) applyPreset(SIZE_PRESETS[activeSizeId]);
+    }
 
     injected = true;
     obs.disconnect();
