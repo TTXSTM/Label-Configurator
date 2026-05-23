@@ -145,7 +145,6 @@
 
   var injected = false;
 
-  /* Default values — used for reset */
   var DEFAULTS = {
     '--codes-offset-x':   0,
     '--barcode-offset-x': 0,
@@ -155,48 +154,46 @@
     '--store-font-scale': 1
   };
 
-  /* Inject CSS overrides once */
+  /* CSS overrides */
   var style = document.createElement('style');
   style.id = 'label-overrides';
   style.textContent =
-    ':root{' +
-      '--codes-offset-x:0px;--barcode-offset-x:0px;--qr-offset-x:0px;' +
-      '--title-font-scale:1;--meta-font-scale:1;--store-font-scale:1' +
-    '}' +
+    ':root{--codes-offset-x:0px;--barcode-offset-x:0px;--qr-offset-x:0px;' +
+    '--title-font-scale:1;--meta-font-scale:1;--store-font-scale:1}' +
     '[data-testid="preview-code-stack"]{transform:translateX(var(--codes-offset-x)) !important}' +
     '[data-testid="preview-code-stack"]>*:first-child{transform:translateX(var(--barcode-offset-x)) !important}' +
     '[data-testid="preview-code-stack"]>*:last-child{transform:translateX(var(--qr-offset-x)) !important}' +
     '[data-testid="preview-title"]{font-size:calc(1em * var(--title-font-scale)) !important}' +
     '[data-testid="preview-inventory"],[data-testid="preview-serial"]{font-size:calc(1em * var(--meta-font-scale)) !important}' +
-    '[data-testid="preview-store"]{font-size:calc(1em * var(--store-font-scale)) !important}';
+    '[data-testid="preview-store"]{font-size:calc(1em * var(--store-font-scale)) !important}' +
+    /* Make the custom range thumb match Radix UI thumb exactly */
+    '.lc-slider{position:relative;display:flex;width:100%;touch-action:none;user-select:none;align-items:center;cursor:pointer}' +
+    '.lc-track{position:relative;height:0.5rem;width:100%;flex-grow:1;overflow:hidden;border-radius:9999px;background-color:hsl(var(--secondary))}' +
+    '.lc-range{position:absolute;height:100%;background-color:hsl(var(--primary))}' +
+    '.lc-thumb{display:block;height:1.25rem;width:1.25rem;border-radius:9999px;border:2px solid hsl(var(--primary));background-color:hsl(var(--background));box-shadow:0 0 0 0 transparent;transition:box-shadow .15s;flex-shrink:0}' +
+    '.lc-thumb:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}';
   document.head.appendChild(style);
 
-  /* Track all slider inputs for reset */
   var sliderRegistry = [];
 
-  /* Reset CSS vars + slider positions on "Сбросить" or size-button click */
+  /* Reset on "Сбросить" click */
   document.addEventListener('click', function (e) {
     var btn = e.target.closest('button');
     if (!btn) return;
-    var txt = btn.textContent.trim();
-    var isReset = txt.includes('Сбросить настройки макета');
+    var isReset = btn.textContent.trim().includes('Сбросить настройки макета');
     var isSize  = (btn.getAttribute('data-testid') || '').startsWith('button-size-');
     if (!isReset && !isSize) return;
-
     Object.keys(DEFAULTS).forEach(function (v) {
-      var val = DEFAULTS[v];
-      document.documentElement.style.setProperty(v, val + (v.includes('offset') ? 'px' : ''));
+      document.documentElement.style.setProperty(v, DEFAULTS[v] + (v.includes('offset') ? 'px' : ''));
     });
-    sliderRegistry.forEach(function (s) {
-      s.input.value = s.def;
-      s.span.textContent = s.def + s.suffix;
-    });
+    sliderRegistry.forEach(function (s) { s.reset(); });
   }, true);
 
-  /* Build a single slider row */
+  /* Build a slider that looks identical to the Radix UI sliders above it */
   function makeSlider(label, cssVar, min, max, step, def, suffix) {
     var wrap = document.createElement('div');
 
+    /* Header: label + value */
     var hdr = document.createElement('div');
     hdr.className = 'flex items-center justify-between mb-2';
 
@@ -204,75 +201,133 @@
     lbl.className = 'text-xs text-muted-foreground';
     lbl.textContent = label;
 
-    var span = document.createElement('span');
-    span.className = 'text-[11px] font-mono text-foreground tabular-nums';
-    span.textContent = def + suffix;
+    var valSpan = document.createElement('span');
+    valSpan.className = 'text-[11px] font-mono text-foreground tabular-nums';
+
+    function fmt(v) {
+      /* Match Radix display: 1 decimal for мм, 2 for × and px */
+      return (suffix === ' мм' ? parseFloat(v).toFixed(1) : parseFloat(v).toFixed(2)) + suffix;
+    }
+    valSpan.textContent = fmt(def);
 
     hdr.appendChild(lbl);
-    hdr.appendChild(span);
+    hdr.appendChild(valSpan);
 
-    var input = document.createElement('input');
-    input.type  = 'range';
-    input.min   = min;
-    input.max   = max;
-    input.step  = step;
-    input.value = def;
-    input.style.cssText = 'width:100%;accent-color:hsl(var(--primary,174 100% 22%));cursor:pointer;';
+    /* Slider track + thumb — same DOM structure as Radix */
+    var sliderEl = document.createElement('div');
+    sliderEl.className = 'lc-slider';
+    sliderEl.setAttribute('role', 'slider');
+    sliderEl.setAttribute('aria-valuemin', min);
+    sliderEl.setAttribute('aria-valuemax', max);
+    sliderEl.setAttribute('aria-valuenow', def);
+    sliderEl.tabIndex = 0;
 
-    input.addEventListener('input', function () {
-      var v = parseFloat(this.value);
-      span.textContent = v + suffix;
+    var track = document.createElement('div');
+    track.className = 'lc-track';
+
+    var range = document.createElement('div');
+    range.className = 'lc-range';
+
+    var thumb = document.createElement('div');
+    thumb.className = 'lc-thumb';
+
+    track.appendChild(range);
+    sliderEl.appendChild(track);
+    sliderEl.appendChild(thumb);
+
+    var current = def;
+
+    function setVal(v) {
+      v = Math.min(max, Math.max(min, v));
+      /* Snap to step */
+      v = Math.round((v - min) / step) * step + min;
+      v = parseFloat(v.toFixed(10));
+      current = v;
+      var pct = (v - min) / (max - min) * 100;
+      range.style.width = pct + '%';
+      /* Centre thumb on the fill end */
+      thumb.style.position = 'absolute';
+      thumb.style.left = 'calc(' + pct + '% - 10px)';
+      valSpan.textContent = fmt(v);
+      sliderEl.setAttribute('aria-valuenow', v);
       document.documentElement.style.setProperty(cssVar, v + (suffix === 'px' ? 'px' : ''));
+    }
+
+    setVal(def); /* initialise */
+
+    /* Mouse / touch drag */
+    function onMove(clientX) {
+      var rect = track.getBoundingClientRect();
+      var pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      setVal(min + pct * (max - min));
+    }
+
+    sliderEl.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      onMove(e.clientX);
+      function mm(e2) { onMove(e2.clientX); }
+      function mu()   { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); }
+      document.addEventListener('mousemove', mm);
+      document.addEventListener('mouseup',   mu);
     });
 
-    sliderRegistry.push({ input: input, span: span, def: def, suffix: suffix, cssVar: cssVar });
+    sliderEl.addEventListener('touchstart', function (e) {
+      onMove(e.touches[0].clientX);
+      function tm(e2) { onMove(e2.touches[0].clientX); }
+      function te()   { sliderEl.removeEventListener('touchmove', tm); sliderEl.removeEventListener('touchend', te); }
+      sliderEl.addEventListener('touchmove', tm, { passive: true });
+      sliderEl.addEventListener('touchend',  te);
+    }, { passive: true });
 
+    /* Keyboard */
+    sliderEl.addEventListener('keydown', function (e) {
+      var d = { ArrowRight: step, ArrowUp: step, ArrowLeft: -step, ArrowDown: -step,
+                Home: min - current, End: max - current };
+      if (d[e.key] !== undefined) { e.preventDefault(); setVal(current + d[e.key]); }
+    });
+
+    /* Footer: min / max labels */
     var ftr = document.createElement('div');
-    ftr.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground';
+    ftr.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground font-mono';
     ftr.innerHTML = '<span>' + min + '</span><span>' + max + '</span>';
 
     wrap.appendChild(hdr);
-    wrap.appendChild(input);
+    wrap.appendChild(sliderEl);
     wrap.appendChild(ftr);
+
+    sliderRegistry.push({ reset: function () { setVal(def); } });
     return wrap;
   }
 
-  /* Find the safe-margin slider row and inject after it */
+  /* Inject after the safe-margin slider row */
   function injectSliders() {
     if (injected) return;
 
     var safeSlider = document.querySelector('[data-testid="slider-safe-margin"]');
     if (!safeSlider) return;
 
-    /* Walk up to the direct child of the space-y container */
     var anchor = safeSlider;
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 8; i++) {
       if (!anchor.parentElement) return;
-      var parentClass = anchor.parentElement.getAttribute('class') || '';
-      if (parentClass.indexOf('space-y') !== -1) break;
+      if ((anchor.parentElement.getAttribute('class') || '').indexOf('space-y') !== -1) break;
       anchor = anchor.parentElement;
     }
     if (!anchor || !anchor.parentElement) return;
 
-    var container = anchor.parentElement;
-    /* Insert before the safe-zone toggle (next sibling of anchor) */
+    var container   = anchor.parentElement;
     var insertBefore = anchor.nextSibling;
 
-    var sliders = [
-      makeSlider('Сдвиг кодов X',    '--codes-offset-x',   -100, 100, 1,    0,    'px'),
-      makeSlider('Сдвиг штрихкода',  '--barcode-offset-x',  -80,  80, 1,    0,    'px'),
-      makeSlider('Сдвиг QR кода',    '--qr-offset-x',       -80,  80, 1,    0,    'px'),
-      makeSlider('Размер заголовка', '--title-font-scale',  0.2,   2, 0.05, 1,    '×'),
-      makeSlider('Размер инв/S/N',   '--meta-font-scale',   0.2,   2, 0.05, 1,    '×'),
-      makeSlider('Размер магазина',  '--store-font-scale',  0.2,   2, 0.05, 1,    '×')
-    ];
-
-    sliders.forEach(function (s) {
-      container.insertBefore(s, insertBefore);
-    });
+    [
+      makeSlider('Сдвиг кодов X',    '--codes-offset-x',   -100, 100, 1,    0, 'px'),
+      makeSlider('Сдвиг штрихкода',  '--barcode-offset-x',  -80,  80, 1,    0, 'px'),
+      makeSlider('Сдвиг QR кода',    '--qr-offset-x',       -80,  80, 1,    0, 'px'),
+      makeSlider('Размер заголовка', '--title-font-scale',  0.2,    2, 0.05, 1, '×'),
+      makeSlider('Размер инв/S/N',   '--meta-font-scale',   0.2,    2, 0.05, 1, '×'),
+      makeSlider('Размер магазина',  '--store-font-scale',  0.2,    2, 0.05, 1, '×')
+    ].forEach(function (s) { container.insertBefore(s, insertBefore); });
 
     injected = true;
-    obs.disconnect(); /* no longer needed */
+    obs.disconnect();
   }
 
   var obs = new MutationObserver(injectSliders);
