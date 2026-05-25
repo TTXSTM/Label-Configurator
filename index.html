@@ -33,67 +33,160 @@
 
   function getJsPDF() { return window.jspdf && window.jspdf.jsPDF; }
 
-  /* Intercept the React save-config click to inject our CSS-var fields.
-     We monkey-patch URL.createObjectURL once — when React calls it with a
-     Blob that looks like a label config JSON we enrich it before download. */
-  var _origCreateObjectURL = URL.createObjectURL.bind(URL);
-  URL.createObjectURL = function (blob) {
-    if (blob && blob.type === 'application/json') {
-      try {
-        var reader = new FileReaderSync ? new FileReaderSync() : null;
-        /* FileReaderSync is only available in Workers; use a sync XHR trick
-           instead — we replace the blob synchronously via a data URL. */
-        var url = _origCreateObjectURL(blob);
-        /* Async enrichment: fetch the blob, patch it, re-trigger download */
-        blob.text().then(function (text) {
-          try {
-            var cfg = JSON.parse(text);
-            /* Inject our CSS-variable values */
-            var root = document.documentElement;
-            cfg.lcCodesOffsetX   = parseFloat(root.style.getPropertyValue('--codes-offset-x'))   || 0;
-            cfg.lcBarcodeOffsetX = parseFloat(root.style.getPropertyValue('--barcode-offset-x')) || 0;
-            cfg.lcQrOffsetX      = parseFloat(root.style.getPropertyValue('--qr-offset-x'))      || 0;
-            cfg.lcTitleScale     = parseFloat(root.style.getPropertyValue('--title-font-scale'))  || 1;
-            cfg.lcMetaScale      = parseFloat(root.style.getPropertyValue('--meta-font-scale'))   || 1;
-            cfg.lcStoreScale     = parseFloat(root.style.getPropertyValue('--store-font-scale'))  || 1;
+  /* ── Save / Load config with our CSS-var fields ──────────────────────── */
 
-            var enriched = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
-            var enrichedUrl = _origCreateObjectURL(enriched);
+  /* Read a slider value from the React-rendered span next to it */
+  function readSliderVal(testId, fallback) {
+    var span = document.querySelector('[data-testid="text-' + testId + '"]');
+    if (!span) return fallback;
+    return parseFloat(span.textContent) || fallback;
+  }
 
-            /* Find the <a> that React just clicked and re-click with new URL */
-            var a = document.querySelector('a[download*="label-config"]');
-            if (a) {
-              a.href = enrichedUrl;
-              a.click();
-              setTimeout(function () { URL.revokeObjectURL(enrichedUrl); }, 1000);
-            }
-          } catch (e) { /* ignore parse errors */ }
-        });
-        return url;
-      } catch (e) { /* fall through */ }
+  /* Read a switch state */
+  function readSwitch(testId, fallback) {
+    var el = document.querySelector('[data-testid="switch-' + testId + '"]');
+    if (!el) return fallback;
+    return el.getAttribute('aria-checked') === 'true' || el.getAttribute('data-state') === 'checked';
+  }
+
+  /* Read an input value */
+  function readInput(testId, fallback) {
+    var el = document.querySelector('[data-testid="input-' + testId + '"]');
+    return el ? el.value : fallback;
+  }
+
+  /* Collect current values of all our CSS variables */
+  function getLcVars() {
+    var root = document.documentElement;
+    function g(v) { return parseFloat(root.style.getPropertyValue(v)) || 0; }
+    return {
+      lcCodesOffsetX:   g('--codes-offset-x'),
+      lcBarcodeOffsetX: g('--barcode-offset-x'),
+      lcQrOffsetX:      g('--qr-offset-x'),
+      lcTitleScale:     g('--title-font-scale') || 1,
+      lcMetaScale:      g('--meta-font-scale')  || 1,
+      lcStoreScale:     g('--store-font-scale') || 1
+    };
+  }
+
+  /* Build the full config by reading DOM state */
+  function buildConfig() {
+    /* Active size id from the highlighted size button */
+    var sizeBtn = document.querySelector('[data-testid^="button-size-"][class*="border-primary"]');
+    var sizeId  = sizeBtn ? sizeBtn.getAttribute('data-testid').replace('button-size-', '') : '58x40';
+
+    /* Active orientation from highlighted orientation button */
+    var orientBtn = document.querySelector('[data-testid^="button-orientation-"][class*="border-primary"], [data-testid^="button-orientation-"][data-state="active"]');
+    var orientation = 'preset';
+    if (!orientBtn) {
+      /* fallback: read from badge */
+      var badge = document.querySelector('[data-testid="badge-size"]');
+      if (badge) orientation = badge.textContent.includes('портрет') ? 'portrait' : 'landscape';
+    } else {
+      orientation = orientBtn.getAttribute('data-testid').replace('button-orientation-', '');
     }
-    return _origCreateObjectURL(blob);
-  };
 
-  /* Intercept file load: after React parses the JSON, apply our fields */
-  document.addEventListener('change', function (e) {
-    var input = e.target;
-    if (!input || input.getAttribute('data-testid') !== 'input-load-config') return;
-    var file = input.files && input.files[0];
-    if (!file) return;
-    file.text().then(function (text) {
-      try {
-        var cfg = JSON.parse(text);
-        /* Apply our CSS-variable fields if present */
-        if (typeof cfg.lcCodesOffsetX   === 'number') window.__lcApplyVar('--codes-offset-x',   cfg.lcCodesOffsetX,   'px');
-        if (typeof cfg.lcBarcodeOffsetX === 'number') window.__lcApplyVar('--barcode-offset-x', cfg.lcBarcodeOffsetX, 'px');
-        if (typeof cfg.lcQrOffsetX      === 'number') window.__lcApplyVar('--qr-offset-x',      cfg.lcQrOffsetX,      'px');
-        if (typeof cfg.lcTitleScale     === 'number') window.__lcApplyVar('--title-font-scale',  cfg.lcTitleScale,     '');
-        if (typeof cfg.lcMetaScale      === 'number') window.__lcApplyVar('--meta-font-scale',   cfg.lcMetaScale,      '');
-        if (typeof cfg.lcStoreScale     === 'number') window.__lcApplyVar('--store-font-scale',  cfg.lcStoreScale,     '');
-      } catch (e) { /* ignore */ }
+    var cfg = {
+      version:            1,
+      sizeId:             sizeId,
+      orientation:        orientation,
+      title:              readInput('title',     'Название оборудования'),
+      inventory:          readInput('inventory', 'CH00209875'),
+      serialNumber:       readInput('serial',    'SN-2026-000184'),
+      storeName:          readInput('store',     'Название магазина'),
+      showTitle:          readSwitch('title',          true),
+      showInventoryText:  readSwitch('inventory-text', true),
+      showSerialText:     readSwitch('serial-text',    true),
+      showBarcode:        readSwitch('barcode',         true),
+      showQr:             readSwitch('qr',              true),
+      showStore:          readSwitch('store',           true),
+      textScale:          readSliderVal('text-scale',          1.2),
+      barcodeScale:       readSliderVal('barcode-scale',       1.35),
+      barcodeHeightScale: readSliderVal('barcode-height-scale',1.25),
+      qrScale:            readSliderVal('qr-scale',            1.15),
+      contentGapScale:    readSliderVal('gap-scale',           0.85),
+      printOffsetXmm:     readSliderVal('print-offset-x',      0),
+      printOffsetYmm:     readSliderVal('print-offset-y',      0),
+      safeMarginMm:       readSliderVal('safe-margin',         3.5),
+      showSafeZone:       readSwitch('safezone', true)
+    };
+
+    /* Merge our CSS-variable fields */
+    return Object.assign(cfg, getLcVars());
+  }
+
+  /* Apply our CSS-var fields from a loaded config object */
+  function applyLcVars(cfg) {
+    if (typeof cfg.lcCodesOffsetX   === 'number') window.__lcApplyVar('--codes-offset-x',   cfg.lcCodesOffsetX,   'px');
+    if (typeof cfg.lcBarcodeOffsetX === 'number') window.__lcApplyVar('--barcode-offset-x', cfg.lcBarcodeOffsetX, 'px');
+    if (typeof cfg.lcQrOffsetX      === 'number') window.__lcApplyVar('--qr-offset-x',      cfg.lcQrOffsetX,      'px');
+    if (typeof cfg.lcTitleScale     === 'number') window.__lcApplyVar('--title-font-scale',  cfg.lcTitleScale,     '');
+    if (typeof cfg.lcMetaScale      === 'number') window.__lcApplyVar('--meta-font-scale',   cfg.lcMetaScale,      '');
+    if (typeof cfg.lcStoreScale     === 'number') window.__lcApplyVar('--store-font-scale',  cfg.lcStoreScale,     '');
+  }
+
+  /* Replace React's save/load buttons with our own */
+  var actionsPatched = false;
+  function patchActionButtons() {
+    if (actionsPatched) return;
+
+    var saveBtn = document.querySelector('[data-testid="button-save-config"]');
+    var loadBtn = document.querySelector('[data-testid="button-load-config"]');
+    if (!saveBtn || !loadBtn) return;
+    actionsPatched = true;
+
+    /* ── Save: read DOM, build JSON, download ── */
+    var newSave = saveBtn.cloneNode(true);
+    newSave.addEventListener('click', function () {
+      var cfg = buildConfig();
+      var blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
+      var url  = URL.createObjectURL(blob);
+      var a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'label-config-' + cfg.sizeId + '-' + cfg.orientation + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     });
-  }, true);
+    saveBtn.parentNode.replaceChild(newSave, saveBtn);
+
+    /* ── Load: pick file, feed to React, apply lc* vars ── */
+    var newLoad = loadBtn.cloneNode(true);
+    var ourInput = document.createElement('input');
+    ourInput.type    = 'file';
+    ourInput.accept  = 'application/json,.json';
+    ourInput.style.display = 'none';
+    ourInput.addEventListener('change', function () {
+      var file = ourInput.files && ourInput.files[0];
+      if (!file) return;
+      file.text().then(function (text) {
+        try {
+          var cfg = JSON.parse(text);
+          /* Feed to React's hidden input so it applies its own fields */
+          var reactInput = document.querySelector('[data-testid="input-load-config"]');
+          if (reactInput) {
+            var dt = new DataTransfer();
+            dt.items.add(file);
+            reactInput.files = dt.files;
+            reactInput.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          /* Apply our lc* fields after React has processed */
+          setTimeout(function () { applyLcVars(cfg); }, 150);
+        } catch (e) {
+          console.error('Load config error:', e);
+          alert('Ошибка загрузки конфига: ' + e.message);
+        }
+        ourInput.value = '';
+      });
+    });
+    document.body.appendChild(ourInput);
+    newLoad.addEventListener('click', function () { ourInput.click(); });
+    loadBtn.parentNode.replaceChild(newLoad, loadBtn);
+  }
+
+  var actionsObserver = new MutationObserver(patchActionButtons);
+  actionsObserver.observe(document.body, { childList: true, subtree: true });
 
   /* Inject "Скачать PDF" button next to the reset button */
   function injectPdfButton() {
@@ -263,7 +356,16 @@
     '.lc-track{position:relative;height:0.5rem;width:100%;flex-grow:1;overflow:hidden;border-radius:9999px;background-color:hsl(var(--secondary))}' +
     '.lc-range{position:absolute;height:100%;background-color:hsl(var(--primary))}' +
     '.lc-thumb{display:block;height:1.25rem;width:1.25rem;border-radius:9999px;border:2px solid hsl(var(--primary));background-color:hsl(var(--background));box-shadow:0 0 0 0 transparent;transition:box-shadow .15s;flex-shrink:0}' +
-    '.lc-thumb:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}';
+    '.lc-thumb:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}' +
+    /* Group headers */
+    '.lc-group{margin-top:0.25rem}' +
+    '.lc-group-header{display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;cursor:pointer;user-select:none}' +
+    '.lc-group-title{font-size:0.75rem;font-weight:600;color:hsl(var(--foreground));letter-spacing:0.01em}' +
+    '.lc-group-chevron{width:0.875rem;height:0.875rem;color:hsl(var(--muted-foreground));transition:transform .2s;flex-shrink:0;margin-left:auto}' +
+    '.lc-group-chevron.open{transform:rotate(180deg)}' +
+    '.lc-group-body{display:flex;flex-direction:column;gap:1.25rem;overflow:hidden}' +
+    '.lc-group-body.collapsed{display:none}' +
+    '.lc-divider{height:1px;background-color:hsl(var(--border));margin:0.5rem 0}';
   document.head.appendChild(style);
 
   var sliderRegistry = [];
@@ -421,6 +523,48 @@
     return wrap;
   }
 
+  /* Create a collapsible group wrapper with a title */
+  function makeGroup(title, open) {
+    var group = document.createElement('div');
+    group.className = 'lc-group';
+
+    var hdr = document.createElement('div');
+    hdr.className = 'lc-group-header';
+
+    var titleEl = document.createElement('span');
+    titleEl.className = 'lc-group-title';
+    titleEl.textContent = title;
+
+    /* Chevron SVG */
+    var chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chevron.setAttribute('viewBox', '0 0 24 24');
+    chevron.setAttribute('fill', 'none');
+    chevron.setAttribute('stroke', 'currentColor');
+    chevron.setAttribute('stroke-width', '2');
+    chevron.setAttribute('stroke-linecap', 'round');
+    chevron.setAttribute('stroke-linejoin', 'round');
+    chevron.setAttribute('class', 'lc-group-chevron' + (open ? ' open' : ''));
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    path.setAttribute('points', '6 9 12 15 18 9');
+    chevron.appendChild(path);
+
+    hdr.appendChild(titleEl);
+    hdr.appendChild(chevron);
+
+    var body = document.createElement('div');
+    body.className = 'lc-group-body' + (open ? '' : ' collapsed');
+
+    hdr.addEventListener('click', function () {
+      var isOpen = !body.classList.contains('collapsed');
+      body.classList.toggle('collapsed', isOpen);
+      chevron.classList.toggle('open', !isOpen);
+    });
+
+    group.appendChild(hdr);
+    group.appendChild(body);
+    return { group: group, body: body };
+  }
+
   /* Inject after the safe-margin slider row */
   function injectSliders() {
     if (injected) return;
@@ -428,6 +572,7 @@
     var safeSlider = document.querySelector('[data-testid="slider-safe-margin"]');
     if (!safeSlider) return;
 
+    /* Find the space-y container */
     var anchor = safeSlider;
     for (var i = 0; i < 8; i++) {
       if (!anchor.parentElement) return;
@@ -437,18 +582,54 @@
     if (!anchor || !anchor.parentElement) return;
 
     var container    = anchor.parentElement;
-    var insertBefore = anchor.nextSibling;
+    var insertBefore = anchor.nextSibling; /* = safe-zone toggle */
 
-    [
-      makeSlider('Сдвиг кодов X',    '--codes-offset-x',   -100, 100, 1,    0, 'px'),
-      makeSlider('Сдвиг штрихкода',  '--barcode-offset-x',  -80,  80, 1,    0, 'px'),
-      makeSlider('Сдвиг QR кода',    '--qr-offset-x',       -80,  80, 1,    0, 'px'),
-      makeSlider('Размер заголовка', '--title-font-scale',  0.2,    2, 0.05, 1, '×'),
-      makeSlider('Размер инв/S/N',   '--meta-font-scale',   0.2,    2, 0.05, 1, '×'),
-      makeSlider('Размер магазина',  '--store-font-scale',  0.2,    2, 0.05, 1, '×')
-    ].forEach(function (s) { container.insertBefore(s, insertBefore); });
+    /* ── Locate React slider rows by testid ─────────────────────────────── */
+    function getRow(testId) {
+      var el = container.querySelector('[data-testid="slider-' + testId + '"]');
+      if (!el) return null;
+      /* Walk up to direct child of container */
+      var row = el;
+      while (row.parentElement && row.parentElement !== container) row = row.parentElement;
+      return row;
+    }
 
-    /* Detect which size is currently active and apply its preset */
+    var rowBarcodeW = getRow('barcode-scale');
+    var rowBarcodeH = getRow('barcode-height-scale');
+    var rowQr       = getRow('qr-scale');
+    var rowGap      = getRow('gap-scale');
+    var rowSafe     = getRow('safe-margin');
+
+    /* ── Build three groups ──────────────────────────────────────────────── */
+    var gBarcode = makeGroup('Штрихкод', true);
+    var gQr      = makeGroup('QR код',   true);
+    var gText    = makeGroup('Текст',    true);
+
+    /* Штрихкод: Штрих ширина, Штрих высота, Сдвиг штрихкода */
+    if (rowBarcodeW) gBarcode.body.appendChild(rowBarcodeW);
+    if (rowBarcodeH) gBarcode.body.appendChild(rowBarcodeH);
+    gBarcode.body.appendChild(makeSlider('Сдвиг штрихкода', '--barcode-offset-x', -80, 80, 1, 0, 'px'));
+
+    /* QR: QR размер, Сдвиг QR кода */
+    if (rowQr) gQr.body.appendChild(rowQr);
+    gQr.body.appendChild(makeSlider('Сдвиг QR кода', '--qr-offset-x', -80, 80, 1, 0, 'px'));
+
+    /* Текст: Интервалы, Безопасный отступ, Сдвиг кодов X, Размер заголовка, Размер инв/S/N, Размер магазина */
+    if (rowGap)  gText.body.appendChild(rowGap);
+    if (rowSafe) gText.body.appendChild(rowSafe);
+    gText.body.appendChild(makeSlider('Сдвиг Штрих / QR', '--codes-offset-x',  -100, 100, 1,    0, 'px'));
+    gText.body.appendChild(makeSlider('Размер заголовка', '--title-font-scale',  0.2,   2, 0.05, 1, '×'));
+    gText.body.appendChild(makeSlider('Размер инв/S/N',   '--meta-font-scale',   0.2,   2, 0.05, 1, '×'));
+    gText.body.appendChild(makeSlider('Размер магазина',  '--store-font-scale',  0.2,   2, 0.05, 1, '×'));
+
+    /* Insert groups before the safe-zone toggle */
+    container.insertBefore(gBarcode.group, insertBefore);
+    container.insertBefore(document.createElement('div'), insertBefore).className = 'lc-divider';
+    container.insertBefore(gQr.group,      insertBefore);
+    container.insertBefore(document.createElement('div'), insertBefore).className = 'lc-divider';
+    container.insertBefore(gText.group,    insertBefore);
+
+    /* Detect active size and apply preset */
     var activeBtn = document.querySelector('[data-testid^="button-size-"][class*="border-primary"]');
     if (activeBtn) {
       activeSizeId = activeBtn.getAttribute('data-testid').replace('button-size-', '');
