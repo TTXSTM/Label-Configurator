@@ -668,68 +668,55 @@
   /* ── CSS for the logo overlay ─────────────────────────────────────── */
   var logoStyle = document.createElement('style');
   logoStyle.textContent =
-    /* When logo is active — hide the text node inside preview-store wrapper */
-    '.lc-logo-active [data-testid="preview-store"] { display:none !important; }' +
-    /* Logo image itself */
-    '#lc-store-logo { display:none; max-width:100%; height:auto; object-fit:contain; pointer-events:none; margin:0 auto; filter:grayscale(100%); }' +
-    '.lc-logo-active #lc-store-logo { display:block; }' +
-    /* Wrapper that centres the logo */
-    '#lc-store-logo-wrap { display:none; width:100%; }' +
-    '.lc-logo-active #lc-store-logo-wrap { display:flex; justify-content:center; align-items:center; }' +
+    '#lc-store-logo { max-width:100%; height:auto; object-fit:contain; filter:grayscale(100%); display:block; margin:0 auto; }' +
     /* Logo size slider row */
     '#lc-logo-slider-row { display:none; margin-top:8px; }' +
     '#lc-logo-slider-row.visible { display:block; }';
   document.head.appendChild(logoStyle);
 
-  /* ── Find the preview-store parent container ─────────────────────── */
+  /* ── Find the preview-store element ─────────────────────────────── */
+  function getStoreEl() {
+    return document.querySelector('[data-testid="preview-store"]');
+  }
+
   function getStoreContainer() {
-    var el = document.querySelector('[data-testid="preview-store"]');
+    var el = getStoreEl();
     return el ? el.parentElement : null;
   }
 
-  /* ── Logo overlay <img> wrapped in a centring div ───────────────────── */
+  /* Saved original innerHTML of preview-store */
+  var savedStoreHTML = null;
+
   var logoOverlay = null;
-  var logoWrap    = null;
-
-  function getOrCreateOverlay() {
-    if (logoOverlay && document.getElementById('lc-store-logo-wrap')) return logoOverlay;
-
-    logoWrap = document.createElement('div');
-    logoWrap.id = 'lc-store-logo-wrap';
-    logoWrap.style.cssText = 'width:100%;display:flex;justify-content:center;align-items:center;';
-
-    logoOverlay = document.createElement('img');
-    logoOverlay.id  = 'lc-store-logo';
-    logoOverlay.alt = '';
-    logoWrap.appendChild(logoOverlay);
-
-    applyLogoSize();
-    return logoOverlay;
-  }
 
   function applyLogoSize() {
     if (!logoOverlay) return;
-    var baseW = 80; /* % of container */
-    logoOverlay.style.width  = (baseW * logoScale) + '%';
+    logoOverlay.style.width  = (80 * logoScale) + '%';
     logoOverlay.style.height = 'auto';
   }
 
   function showLogo(name) {
     activeLogo = name;
+    var storeEl = getStoreEl();
+    if (!storeEl) return;
 
-    var container = getStoreContainer();
-    if (!container) return;
-
-    container.classList.add('lc-logo-active');
-
-    var overlay = getOrCreateOverlay();
-    overlay.src = LOGOS[name];
-    overlay.alt = name;
-    applyLogoSize();
-
-    if (!container.querySelector('#lc-store-logo-wrap')) {
-      container.appendChild(logoWrap);
+    /* Save original content once */
+    if (savedStoreHTML === null) {
+      savedStoreHTML = storeEl.innerHTML;
     }
+
+    /* Replace content with centred logo img */
+    storeEl.innerHTML = '';
+    storeEl.style.display        = 'flex';
+    storeEl.style.alignItems     = 'center';
+    storeEl.style.justifyContent = 'center';
+
+    logoOverlay = document.createElement('img');
+    logoOverlay.id  = 'lc-store-logo';
+    logoOverlay.src = LOGOS[name];
+    logoOverlay.alt = name;
+    applyLogoSize();
+    storeEl.appendChild(logoOverlay);
 
     updateTagHighlight(name);
     updateSliderVisibility(true);
@@ -737,10 +724,15 @@
 
   function hideLogo() {
     activeLogo = null;
-
-    var container = getStoreContainer();
-    if (container) container.classList.remove('lc-logo-active');
-
+    var storeEl = getStoreEl();
+    if (storeEl && savedStoreHTML !== null) {
+      storeEl.innerHTML = savedStoreHTML;
+      storeEl.style.display        = '';
+      storeEl.style.alignItems     = '';
+      storeEl.style.justifyContent = '';
+      savedStoreHTML = null;
+      logoOverlay = null;
+    }
     updateTagHighlight(null);
     updateSliderVisibility(false);
   }
@@ -762,24 +754,23 @@
     row.classList.toggle('visible', visible);
   }
 
-  /* ── Re-apply logo when React re-renders the preview ─────────────── */
+  /* ── Re-apply logo if the app re-renders preview-store ───────────── */
   var previewObs = new MutationObserver(function () {
     if (!activeLogo) return;
-    var container = getStoreContainer();
-    if (!container) return;
-    /* Ensure class is still there */
-    if (!container.classList.contains('lc-logo-active')) {
-      container.classList.add('lc-logo-active');
-    }
-    /* Ensure overlay is still in DOM */
-    if (!container.querySelector('#lc-store-logo-wrap')) {
-      var overlay = getOrCreateOverlay();
-      overlay.src = LOGOS[activeLogo];
-      applyLogoSize();
-      container.appendChild(logoWrap);
+    var storeEl = getStoreEl();
+    if (!storeEl) return;
+    /* If our img is gone — re-inject */
+    if (!storeEl.querySelector('#lc-store-logo')) {
+      savedStoreHTML = null; /* reset so we don't restore stale HTML */
+      showLogo(activeLogo);
     }
   });
   previewObs.observe(document.body, { childList: true, subtree: true });
+
+  /* Re-apply size on window resize */
+  window.addEventListener('resize', function () {
+    if (activeLogo) applyLogoSize();
+  });
 
   /* ── Inject tags row + size slider below the store input ─────────── */
   var tagsInjected = false;
