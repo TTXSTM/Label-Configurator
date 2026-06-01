@@ -112,7 +112,10 @@
     };
 
     /* Merge our CSS-variable fields */
-    return Object.assign(cfg, getLcVars());
+    return Object.assign(cfg, getLcVars(), {
+      storeLogo:      window.__lcActiveLogo  || null,
+      storeLogoScale: window.__lcLogoScale   || 1.0
+    });
   }
 
   /* Apply our CSS-var fields from a loaded config object */
@@ -123,6 +126,15 @@
     if (typeof cfg.lcTitleScale     === 'number') window.__lcApplyVar('--title-font-scale',  cfg.lcTitleScale,     '');
     if (typeof cfg.lcMetaScale      === 'number') window.__lcApplyVar('--meta-font-scale',   cfg.lcMetaScale,      '');
     if (typeof cfg.lcStoreScale     === 'number') window.__lcApplyVar('--store-font-scale',  cfg.lcStoreScale,     '');
+    /* Restore logo state */
+    if (cfg.storeLogo) {
+      setTimeout(function () {
+        if (typeof cfg.storeLogoScale === 'number') window.__lcSetLogoScale(cfg.storeLogoScale);
+        window.__lcShowLogo(cfg.storeLogo);
+      }, 200);
+    } else {
+      if (window.__lcHideLogo) window.__lcHideLogo();
+    }
   }
 
   /* Replace React's save/load buttons with our own */
@@ -754,6 +766,28 @@
     row.classList.toggle('visible', visible);
   }
 
+  /* ── Public API for save/load integration ────────────────────────── */
+  window.__lcShowLogo     = showLogo;
+  window.__lcHideLogo     = hideLogo;
+  window.__lcSetLogoScale = function (v) {
+    logoScale = v;
+    applyLogoSize();
+    /* Sync slider UI */
+    var sliderRow = document.getElementById('lc-logo-slider-row');
+    if (sliderRow) {
+      var fill  = sliderRow.querySelector('.lc-logo-fill');
+      var thumb = sliderRow.querySelector('.lc-logo-thumb');
+      var val   = sliderRow.querySelector('.lc-logo-val');
+      var MIN = 0.25, MAX = 2.0;
+      var pct = (v - MIN) / (MAX - MIN) * 100;
+      if (fill)  fill.style.width = pct + '%';
+      if (thumb) thumb.style.left = 'calc(' + pct + '% - 10px)';
+      if (val)   val.textContent  = Math.round(v * 100) + '%';
+    }
+  };
+  Object.defineProperty(window, '__lcActiveLogo',  { get: function () { return activeLogo;  } });
+  Object.defineProperty(window, '__lcLogoScale',   { get: function () { return logoScale;   } });
+
   /* ── Re-apply logo if the app re-renders preview-store ───────────── */
   var previewObs = new MutationObserver(function () {
     if (!activeLogo) return;
@@ -877,6 +911,7 @@
     sliderLbl.style.flex = '1';
 
     var sliderVal = document.createElement('span');
+    sliderVal.className = 'lc-logo-val';
     sliderVal.style.cssText = 'font-size:11px;font-family:monospace;color:hsl(var(--foreground));min-width:36px;text-align:right;';
     sliderVal.textContent = '100%';
 
@@ -891,9 +926,11 @@
     track.style.cssText = 'position:relative;height:0.5rem;width:100%;border-radius:9999px;background:hsl(var(--secondary));';
 
     var fill = document.createElement('div');
+    fill.className = 'lc-logo-fill';
     fill.style.cssText = 'position:absolute;height:100%;border-radius:9999px;background:hsl(var(--primary));width:50%;';
 
     var thumb = document.createElement('div');
+    thumb.className = 'lc-logo-thumb';
     thumb.style.cssText = [
       'position:absolute', 'width:1.25rem', 'height:1.25rem',
       'border-radius:9999px', 'border:2px solid hsl(var(--primary))',
