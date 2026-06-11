@@ -680,11 +680,38 @@
   /* ── CSS for the logo overlay ─────────────────────────────────────── */
   var logoStyle = document.createElement('style');
   logoStyle.textContent =
-    '#lc-store-logo { max-width:100%; height:auto; object-fit:contain; filter:grayscale(100%); display:block; margin:0 auto; }' +
+    '#lc-store-logo { max-width:100%; height:auto; object-fit:contain; filter:url(#lc-threshold); display:block; margin:0 auto; }' +
     /* Logo size slider row */
     '#lc-logo-slider-row { display:none; margin-top:8px; }' +
     '#lc-logo-slider-row.visible { display:block; }';
   document.head.appendChild(logoStyle);
+
+  /* SVG filter for threshold (pure black & white) */
+  var svgFilter = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svgFilter.setAttribute('width', '0');
+  svgFilter.setAttribute('height', '0');
+  svgFilter.style.position = 'absolute';
+  svgFilter.innerHTML =
+    '<defs>' +
+      '<filter id="lc-threshold" color-interpolation-filters="sRGB">' +
+        '<feColorMatrix type="saturate" values="0"/>' +
+        '<feComponentTransfer>' +
+          '<feFuncR type="discrete" tableValues="0 0 0 1 1"/>' +
+          '<feFuncG type="discrete" tableValues="0 0 0 1 1"/>' +
+          '<feFuncB type="discrete" tableValues="0 0 0 1 1"/>' +
+        '</feComponentTransfer>' +
+      '</filter>' +
+      /* Perekrestok-specific: force all non-white to black */
+      '<filter id="lc-threshold-dark" color-interpolation-filters="sRGB">' +
+        '<feColorMatrix type="saturate" values="0"/>' +
+        '<feComponentTransfer>' +
+          '<feFuncR type="discrete" tableValues="0 0 0 0 0 0 0 1"/>' +
+          '<feFuncG type="discrete" tableValues="0 0 0 0 0 0 0 1"/>' +
+          '<feFuncB type="discrete" tableValues="0 0 0 0 0 0 0 1"/>' +
+        '</feComponentTransfer>' +
+      '</filter>' +
+    '</defs>';
+  document.body.appendChild(svgFilter);
 
   /* ── Find the preview-store element ─────────────────────────────── */
   function getStoreEl() {
@@ -727,6 +754,10 @@
     logoOverlay.id  = 'lc-store-logo';
     logoOverlay.src = LOGOS[name];
     logoOverlay.alt = name;
+    /* Use darker threshold for Perekrestok to force all shades to black */
+    if (name === 'Перекрёсток') {
+      logoOverlay.style.filter = 'url(#lc-threshold-dark)';
+    }
     applyLogoSize();
     storeEl.appendChild(logoOverlay);
 
