@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Учёт оборудования</title>
+  <link rel="stylesheet" href="inventory.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✓</span><div><strong>Учёт оборудования</strong><small>Сканер инвентарных и серийных номеров</small></div></div>
+    <div class="header-actions"><a class="back-link" href="index.html">← К этикеткам</a><div id="saveState" class="save-state"><span></span> Сохранено</div></div>
+  </header>
+
+  <main>
+    <section class="scanner-card">
+      <div class="scan-icon">⌗</div>
+      <div class="scan-copy">
+        <h1>Сканируйте номер</h1>
+        <p>Поле всегда готово к сканированию. После скана нажмите Enter.</p>
+        <form id="scanForm" class="scan-row">
+          <input id="scanInput" autocomplete="off" autofocus placeholder="Отсканируйте или введите номер…">
+          <button class="primary" type="submit">Найти</button>
+        </form>
+        <div id="message" class="message" aria-live="polite">Готов к работе</div>
+        <div id="typeChoice" class="type-choice hidden">
+          <span>Что это за номер?</span>
+          <button data-type="inventory" type="button">Инвентарный</button>
+          <button data-type="serial" type="button">Серийный</button>
+          <button data-type="cancel" class="ghost" type="button">Отмена</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="pendingCard" class="pending-card hidden">
+      <div><small>Собираем новую запись</small><strong id="pendingValue"></strong></div>
+      <span id="pendingHint"></span><button id="cancelPending" class="ghost" type="button">Отменить</button>
+    </section>
+
+    <section class="content-card">
+      <div class="section-head">
+        <div><h2>Список оборудования</h2><p><span id="recordCount">0</span> записей</p></div>
+        <div class="actions">
+          <label class="button" for="csvInput">Загрузить CSV</label><input id="csvInput" type="file" accept=".csv,text/csv" hidden>
+          <button id="exportBtn" class="button" type="button">Скачать CSV</button>
+          <button id="addBtn" class="primary" type="button">+ Добавить</button>
+        </div>
+      </div>
+      <div class="tools"><input id="searchInput" placeholder="Поиск по списку…"><button id="settingsBtn" class="icon-btn" title="Правила распознавания">⚙</button></div>
+      <div class="table-wrap">
+        <table><thead><tr><th>№</th><th>Инвентарный номер</th><th>Серийный номер</th><th>Дата</th><th></th></tr></thead><tbody id="tableBody"></tbody></table>
+        <div id="emptyState" class="empty"><b>Список пока пуст</b><span>Добавьте запись или загрузите CSV</span></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="recordDialog">
+    <form id="recordForm" method="dialog"><h3 id="dialogTitle">Новая запись</h3><input id="editId" type="hidden">
+      <label>Инвентарный номер<input id="inventoryInput" required></label>
+      <label>Серийный номер<input id="serialInput" required></label>
+      <div class="dialog-actions"><button class="ghost" value="cancel" type="button" data-close>Отмена</button><button class="primary" value="default">Сохранить</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog"><form id="settingsForm" method="dialog"><h3>Правила распознавания</h3><p>Укажите начала номеров через запятую. Известные номера всегда определяются по списку.</p>
+    <label>Начало инвентарных номеров<input id="inventoryPrefixes" placeholder="INV, ИНВ, 00"></label>
+    <label>Начало серийных номеров<input id="serialPrefixes" placeholder="SN, S/N"></label>
+    <div class="dialog-actions"><button class="ghost" type="button" data-close>Отмена</button><button class="primary">Сохранить</button></div></form></dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="inventory.js"></script>
+</body>
+</html>

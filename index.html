@@ -15,8 +15,10 @@
     />
     <script type="module" crossorigin src="./assets/index-DQzgibq4.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-BDEpssnV.css">
+    <link rel="stylesheet" href="./modern-design.css?v=20260803-4">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script defer src="./ux-enhancements.js"></script>
   </head>
   <body>
     <div id="root"></div>
@@ -136,6 +138,10 @@
       if (window.__lcHideLogo) window.__lcHideLogo();
     }
   }
+
+  /* Public hooks used by the named-template manager. */
+  window.__lcBuildConfig = buildConfig;
+  window.__lcApplyConfigExtras = applyLcVars;
 
   /* Replace React's save/load buttons with our own */
   var actionsPatched = false;
@@ -538,7 +544,8 @@
   /* Create a collapsible group wrapper with a title */
   function makeGroup(title, open) {
     var group = document.createElement('div');
-    group.className = 'lc-group';
+    var kind = title === 'Штрихкод' ? 'barcode' : (title.indexOf('QR') === 0 ? 'qr' : 'text');
+    group.className = 'lc-group lc-group-' + kind;
 
     var hdr = document.createElement('div');
     hdr.className = 'lc-group-header';
@@ -614,8 +621,8 @@
 
     /* ── Build three groups ──────────────────────────────────────────────── */
     var gBarcode = makeGroup('Штрихкод', true);
-    var gQr      = makeGroup('QR код',   true);
-    var gText    = makeGroup('Текст',    true);
+    var gQr      = makeGroup('QR код',   false);
+    var gText    = makeGroup('Текст',    false);
 
     /* Штрихкод: Штрих ширина, Штрих высота, Сдвиг штрихкода */
     if (rowBarcodeW) gBarcode.body.appendChild(rowBarcodeW);
@@ -1048,7 +1055,9 @@
   .lc-batch-close{border:0;background:transparent;color:#64748b;font-size:28px;line-height:1;cursor:pointer}
   .lc-batch-body{padding:8px 22px 22px}.lc-batch-example{margin:0 0 8px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:#475569}
   .lc-batch-input{box-sizing:border-box;width:100%;min-height:240px;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:12px;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:#0f172a;background:#fff}
+  .lc-batch-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:5px 0 16px}.lc-batch-mode{position:relative;display:block}.lc-batch-mode input{position:absolute;opacity:0;pointer-events:none}.lc-batch-mode-content{display:block;height:100%;padding:12px;border:1.5px solid #cbd5e1;border-radius:10px;background:#f8fafc;cursor:pointer;transition:.15s}.lc-batch-mode-content strong,.lc-batch-mode-content small{display:block}.lc-batch-mode-content strong{font-size:13px;color:#0f172a}.lc-batch-mode-content small{margin-top:3px;font-size:11px;line-height:1.35;color:#64748b}.lc-batch-mode input:checked+.lc-batch-mode-content{border-color:#01696f;background:#ecfdf5;box-shadow:0 0 0 2px rgba(1,105,111,.12)}
   .lc-batch-status{min-height:20px;margin-top:8px;color:#475569;font-size:13px}.lc-batch-status.is-error{color:#b91c1c}
+  .lc-print-note{margin-top:12px;padding:10px 12px;border:1px solid #f0c36a;border-radius:8px;background:#fff8e6;color:#744d08;font-size:12px;line-height:1.45}.lc-print-note strong{font-weight:700}
   .lc-batch-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}.lc-batch-btn{border:1px solid #cbd5e1;border-radius:7px;padding:9px 15px;background:#fff;color:#0f172a;font-size:14px;font-weight:600;cursor:pointer}.lc-batch-btn-primary{border-color:#01696f;background:#01696f;color:#fff}.lc-batch-btn:disabled{cursor:wait;opacity:.55}
   #print-batch-root{display:none}
   @media print{
@@ -1059,7 +1068,11 @@
     #print-batch-root .lc-print-label{position:relative!important;left:var(--print-offset-x,0px)!important;top:var(--print-offset-y,0px)!important;margin:0!important;padding:0!important;box-shadow:none!important;border:0!important;border-radius:0!important;transform:none!important;overflow:hidden!important;break-after:page!important;page-break-after:always!important}
     #print-batch-root .lc-print-label:last-child{break-after:auto!important;page-break-after:auto!important}
     #print-batch-root .label-safezone{display:none!important}
+    #print-batch-root .lc-mode-inventory [data-testid="preview-serial"],#print-batch-root .lc-mode-inventory [data-testid="preview-qr"]{display:none!important}
+    #print-batch-root .lc-mode-serial [data-testid="preview-inventory"],#print-batch-root .lc-mode-serial [data-testid="preview-barcode"]{display:none!important}
+    #print-batch-root .lc-mode-inventory [data-testid="preview-code-stack"],#print-batch-root .lc-mode-serial [data-testid="preview-code-stack"]{justify-content:center!important;align-items:center!important}
   }
+  @media(max-width:620px){.lc-batch-modes{grid-template-columns:1fr}.lc-batch-input{min-height:190px}}
 </style>
 
 <script>
@@ -1083,16 +1096,26 @@
   }
   function nextPaint() { return new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); }); }
 
-  function parseRows(text) {
+  function parseRows(text, mode) {
     var rows = [], errors = [];
     text.split(/\r?\n/).forEach(function (raw, index) {
       if (!raw.trim()) return;
       var separator = raw.indexOf('\t') >= 0 ? '\t' : (raw.indexOf(';') >= 0 ? ';' : '|');
       var cols = raw.split(separator).map(function (s) { return s.trim(); });
-      if (cols.length < 3 || !cols[0] || !cols[1] || !cols[2]) {
-        errors.push(index + 1); return;
+      if (mode === 'full') {
+        if (cols.length < 3 || !cols[0] || !cols[1] || !cols[2]) { errors.push(index + 1); return; }
+        rows.push({ title: cols[0], inventory: cols[1], serial: cols.slice(2).join(separator).trim() });
+      } else if (mode === 'inventory') {
+        var inventory = cols.length >= 3 ? cols[1] : (cols.length === 2 ? cols[1] : cols[0]);
+        var inventoryTitle = cols.length >= 2 ? cols[0] : '';
+        if (!inventory) { errors.push(index + 1); return; }
+        rows.push({ title: inventoryTitle, inventory: inventory, serial: '' });
+      } else {
+        var serial = cols.length >= 3 ? cols.slice(2).join(separator).trim() : (cols.length === 2 ? cols[1] : cols[0]);
+        var serialTitle = cols.length >= 2 ? cols[0] : '';
+        if (!serial) { errors.push(index + 1); return; }
+        rows.push({ title: serialTitle, inventory: '', serial: serial });
       }
-      rows.push({ title: cols[0], inventory: cols[1], serial: cols.slice(2).join(separator).trim() });
     });
     return { rows: rows, errors: errors };
   }
@@ -1106,22 +1129,37 @@
       '<div class="lc-batch-head"><div><h2 class="lc-batch-title" id="lc-batch-title">Печать списка этикеток</h2>' +
       '<p class="lc-batch-help">Каждая строка будет напечатана на отдельной этикетке. Положение всех элементов останется строго одинаковым.</p></div>' +
       '<button class="lc-batch-close" type="button" aria-label="Закрыть">×</button></div>' +
-      '<div class="lc-batch-body"><p class="lc-batch-example">Название оборудования ; Инвентарный номер ; Серийный номер</p>' +
+      '<div class="lc-batch-body"><div class="lc-batch-modes">' +
+      '<label class="lc-batch-mode"><input type="radio" name="lc-print-mode" value="full" checked><span class="lc-batch-mode-content"><strong>Полный комплект</strong><small>Название + инвентарный + серийный</small></span></label>' +
+      '<label class="lc-batch-mode"><input type="radio" name="lc-print-mode" value="inventory"><span class="lc-batch-mode-content"><strong>Инвентарник</strong><small>Название, магазин, инвентарник и штрихкод</small></span></label>' +
+      '<label class="lc-batch-mode"><input type="radio" name="lc-print-mode" value="serial"><span class="lc-batch-mode-content"><strong>S/N</strong><small>Название, магазин, S/N и QR‑код</small></span></label></div>' +
+      '<p class="lc-batch-example">Название оборудования ; Инвентарный номер ; Серийный номер</p>' +
       '<textarea class="lc-batch-input" spellcheck="false" placeholder="Ноутбук Lenovo ThinkPad T14; CH00209875; SN-2026-000184\nМонитор Samsung 24; CH00209876; SN-2026-000185"></textarea>' +
       '<div class="lc-batch-status">Можно вставить данные из Excel (3 столбца) или разделить поля точкой с запятой.</div>' +
+      '<div class="lc-print-note"><strong>В окне печати:</strong> отключите «Колонтитулы», чтобы на этикетках не было даты, localhost и номера страницы.</div>' +
       '<div class="lc-batch-actions"><button class="lc-batch-btn lc-batch-cancel" type="button">Отмена</button><button class="lc-batch-btn lc-batch-btn-primary lc-batch-start" type="button">Печатать все</button></div></div></section>';
     document.body.appendChild(dialog);
     dialog.querySelector('.lc-batch-close').onclick = closeDialog;
     dialog.querySelector('.lc-batch-cancel').onclick = closeDialog;
     dialog.addEventListener('click', function (e) { if (e.target === dialog) closeDialog(); });
     dialog.querySelector('.lc-batch-start').onclick = buildAndPrint;
+    Array.from(dialog.querySelectorAll('[name="lc-print-mode"]')).forEach(function (radio) { radio.onchange = updateBatchHelp; });
     dialog.querySelector('textarea').focus();
+  }
+
+  function updateBatchHelp() {
+    var mode = dialog.querySelector('[name="lc-print-mode"]:checked').value;
+    var example = dialog.querySelector('.lc-batch-example'), input = dialog.querySelector('.lc-batch-input'), status = dialog.querySelector('.lc-batch-status');
+    if (mode === 'full') { example.textContent = 'Название ; Инвентарный номер ; Серийный номер'; input.placeholder = 'Ноутбук Lenovo; CH00209875; SN-2026-000184'; status.textContent = 'Вставьте 3 столбца из Excel или строки через точку с запятой.'; }
+    else if (mode === 'inventory') { example.textContent = 'Название оборудования ; Инвентарный номер'; input.placeholder = 'АТОЛ 25Ф\tCH00209875\nСканер Zebra\tCH00209876'; status.textContent = 'Вставьте 2 столбца из Excel: название и инвентарник. Можно также вставить один столбец номеров.'; }
+    else { example.textContent = 'Название оборудования ; S/N'; input.placeholder = 'АТОЛ 25Ф\t105703670249\nСканер Zebra\tSNA123456'; status.textContent = 'Вставьте 2 столбца из Excel: название и S/N. Можно также вставить один столбец номеров.'; }
   }
 
   async function buildAndPrint() {
     var textarea = dialog.querySelector('textarea'), status = dialog.querySelector('.lc-batch-status'), button = dialog.querySelector('.lc-batch-start');
-    var parsed = parseRows(textarea.value);
-    if (parsed.errors.length) { status.className = 'lc-batch-status is-error'; status.textContent = 'Проверьте строки: ' + parsed.errors.join(', ') + '. В каждой строке должны быть 3 заполненных поля.'; return; }
+    var mode = dialog.querySelector('[name="lc-print-mode"]:checked').value;
+    var parsed = parseRows(textarea.value, mode);
+    if (parsed.errors.length) { status.className = 'lc-batch-status is-error'; status.textContent = 'Проверьте строки: ' + parsed.errors.join(', ') + '. Найдены пустые или неполные данные.'; return; }
     if (!parsed.rows.length) { status.className = 'lc-batch-status is-error'; status.textContent = 'Добавьте хотя бы одну строку с данными.'; return; }
     var title = field('title'), inventory = field('inventory'), serial = field('serial');
     var source = document.getElementById('print-root');
@@ -1133,10 +1171,11 @@
     try {
       for (var i = 0; i < parsed.rows.length; i++) {
         status.textContent = 'Подготовка этикетки ' + (i + 1) + ' из ' + parsed.rows.length + '…';
-        setReactValue(title, parsed.rows[i].title); setReactValue(inventory, parsed.rows[i].inventory); setReactValue(serial, parsed.rows[i].serial);
+        setReactValue(title, parsed.rows[i].title || original.title); setReactValue(inventory, parsed.rows[i].inventory); setReactValue(serial, parsed.rows[i].serial);
         await nextPaint();
         source = document.getElementById('print-root');
         var clone = source.cloneNode(true); clone.removeAttribute('id'); clone.classList.add('lc-print-label');
+        clone.classList.add('lc-mode-' + mode);
         clone.style.transform = 'none'; clone.style.transformOrigin = 'top left';
         batch.appendChild(clone);
       }
