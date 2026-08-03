@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- убран maximum-scale=1 — блокировал зум на мобильных (WCAG 1.4.4) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Label Configurator — макет термоэтикетки</title>
+    <meta name="description" content="Конфигуратор макета термоэтикетки для e-commerce: пресеты размеров, предпросмотр, печать с физическими размерами." />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3.5' y='6' width='25' height='20' rx='2.5' fill='none' stroke='%2301696F' stroke-width='2'/><rect x='7' y='15.5' width='6.5' height='6.5' fill='%2301696F'/></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Fira+Code:wght@300..700&family=Geist+Mono:wght@100..900&family=Geist:wght@100..900&family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&family=IBM+Plex+Sans:ital,wght@0,100..700;1,100..700&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&family=Montserrat:ital,wght@0,100..900;1,100..900&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=Outfit:wght@100..900&family=Oxanium:wght@200..800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&family=Roboto:ital,wght@0,100..900;1,100..900&family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&family=Space+Grotesk:wght@300..700&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" crossorigin src="./assets/index-DQzgibq4.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BDEpssnV.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif;text-align:center;padding:2rem;">
+        <p>Для работы Label Configurator необходим JavaScript. Пожалуйста, включите его в настройках браузера.</p>
+      </div>
+    </noscript>
+
+<script>
+/* ── PDF download button ──────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
+  function getJsPDF() { return window.jspdf && window.jspdf.jsPDF; }
+
+  /* ── Save / Load config with our CSS-var fields ──────────────────────── */
+
+  /* Read a slider value from the React-rendered span next to it */
+  function readSliderVal(testId, fallback) {
+    var span = document.querySelector('[data-testid="text-' + testId + '"]');
+    if (!span) return fallback;
+    return parseFloat(span.textContent) || fallback;
+  }
+
+  /* Read a switch state */
+  function readSwitch(testId, fallback) {
+    var el = document.querySelector('[data-testid="switch-' + testId + '"]');
+    if (!el) return fallback;
+    return el.getAttribute('aria-checked') === 'true' || el.getAttribute('data-state') === 'checked';
+  }
+
+  /* Read an input value */
+  function readInput(testId, fallback) {
+    var el = document.querySelector('[data-testid="input-' + testId + '"]');
+    return el ? el.value : fallback;
+  }
+
+  /* Collect current values of all our CSS variables */
+  function getLcVars() {
+    var root = document.documentElement;
+    function g(v) { return parseFloat(root.style.getPropertyValue(v)) || 0; }
+    return {
+      lcCodesOffsetX:   g('--codes-offset-x'),
+      lcBarcodeOffsetX: g('--barcode-offset-x'),
+      lcQrOffsetX:      g('--qr-offset-x'),
+      lcTitleScale:     g('--title-font-scale') || 1,
+      lcMetaScale:      g('--meta-font-scale')  || 1,
+      lcStoreScale:     g('--store-font-scale') || 1
+    };
+  }
+
+  /* Build the full config by reading DOM state */
+  function buildConfig() {
+    /* Active size id from the highlighted size button */
+    var sizeBtn = document.querySelector('[data-testid^="button-size-"][class*="border-primary"]');
+    var sizeId  = sizeBtn ? sizeBtn.getAttribute('data-testid').replace('button-size-', '') : '58x40';
+
+    /* Active orientation from highlighted orientation button */
+    var orientBtn = document.querySelector('[data-testid^="button-orientation-"][class*="border-primary"], [data-testid^="button-orientation-"][data-state="active"]');
+    var orientation = 'preset';
+    if (!orientBtn) {
+      /* fallback: read from badge */
+      var badge = document.querySelector('[data-testid="badge-size"]');
+      if (badge) orientation = badge.textContent.includes('портрет') ? 'portrait' : 'landscape';
+    } else {
+      orientation = orientBtn.getAttribute('data-testid').replace('button-orientation-', '');
+    }
+
+    var cfg = {
+      version:            1,
+      sizeId:             sizeId,
+      orientation:        orientation,
+      title:              readInput('title',     'Название оборудования'),
+      inventory:          readInput('inventory', 'CH00209875'),
+      serialNumber:       readInput('serial',    'SN-2026-000184'),
+      storeName:          readInput('store',     'Название магазина'),
+      showTitle:          readSwitch('title',          true),
+      showInventoryText:  readSwitch('inventory-text', true),
+      showSerialText:     readSwitch('serial-text',    true),
+      showBarcode:        readSwitch('barcode',         true),
+      showQr:             readSwitch('qr',              true),
+      showStore:          readSwitch('store',           true),
+      textScale:          readSliderVal('text-scale',          1.2),
+      barcodeScale:       readSliderVal('barcode-scale',       1.35),
+      barcodeHeightScale: readSliderVal('barcode-height-scale',1.25),
+      qrScale:            readSliderVal('qr-scale',            1.15),
+      contentGapScale:    readSliderVal('gap-scale',           0.85),
+      printOffsetXmm:     readSliderVal('print-offset-x',      0),
+      printOffsetYmm:     readSliderVal('print-offset-y',      0),
+      safeMarginMm:       readSliderVal('safe-margin',         3.5),
+      showSafeZone:       readSwitch('safezone', true)
+    };
+
+    /* Merge our CSS-variable fields */
+    return Object.assign(cfg, getLcVars(), {
+      storeLogo:      window.__lcActiveLogo  || null,
+      storeLogoScale: window.__lcLogoScale   || 1.0
+    });
+  }
+
+  /* Apply our CSS-var fields from a loaded config object */
+  function applyLcVars(cfg) {
+    if (typeof cfg.lcCodesOffsetX   === 'number') window.__lcApplyVar('--codes-offset-x',   cfg.lcCodesOffsetX,   'px');
+    if (typeof cfg.lcBarcodeOffsetX === 'number') window.__lcApplyVar('--barcode-offset-x', cfg.lcBarcodeOffsetX, 'px');
+    if (typeof cfg.lcQrOffsetX      === 'number') window.__lcApplyVar('--qr-offset-x',      cfg.lcQrOffsetX,      'px');
+    if (typeof cfg.lcTitleScale     === 'number') window.__lcApplyVar('--title-font-scale',  cfg.lcTitleScale,     '');
+    if (typeof cfg.lcMetaScale      === 'number') window.__lcApplyVar('--meta-font-scale',   cfg.lcMetaScale,      '');
+    if (typeof cfg.lcStoreScale     === 'number') window.__lcApplyVar('--store-font-scale',  cfg.lcStoreScale,     '');
+    /* Restore logo state */
+    if (cfg.storeLogo) {
+      setTimeout(function () {
+        if (typeof cfg.storeLogoScale === 'number') window.__lcSetLogoScale(cfg.storeLogoScale);
+        window.__lcShowLogo(cfg.storeLogo);
+      }, 200);
+    } else {
+      if (window.__lcHideLogo) window.__lcHideLogo();
+    }
+  }
+
+  /* Replace React's save/load buttons with our own */
+  var actionsPatched = false;
+  function patchActionButtons() {
+    if (actionsPatched) return;
+
+    var saveBtn = document.querySelector('[data-testid="button-save-config"]');
+    var loadBtn = document.querySelector('[data-testid="button-load-config"]');
+    if (!saveBtn || !loadBtn) return;
+    actionsPatched = true;
+
+    /* ── Save: read DOM, build JSON, download ── */
+    var newSave = saveBtn.cloneNode(true);
+    newSave.addEventListener('click', function () {
+      var cfg = buildConfig();
+      var blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
+      var url  = URL.createObjectURL(blob);
+      var a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'label-config-' + cfg.sizeId + '-' + cfg.orientation + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
+    saveBtn.parentNode.replaceChild(newSave, saveBtn);
+
+    /* ── Load: pick file, feed to React, apply lc* vars ── */
+    var newLoad = loadBtn.cloneNode(true);
+    var ourInput = document.createElement('input');
+    ourInput.type    = 'file';
+    ourInput.accept  = 'application/json,.json';
+    ourInput.style.display = 'none';
+    ourInput.addEventListener('change', function () {
+      var file = ourInput.files && ourInput.files[0];
+      if (!file) return;
+      file.text().then(function (text) {
+        try {
+          var cfg = JSON.parse(text);
+          /* Feed to React's hidden input so it applies its own fields */
+          var reactInput = document.querySelector('[data-testid="input-load-config"]');
+          if (reactInput) {
+            var dt = new DataTransfer();
+            dt.items.add(file);
+            reactInput.files = dt.files;
+            reactInput.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          /* Apply our lc* fields after React has processed */
+          setTimeout(function () { applyLcVars(cfg); }, 150);
+        } catch (e) {
+          console.error('Load config error:', e);
+          alert('Ошибка загрузки конфига: ' + e.message);
+        }
+        ourInput.value = '';
+      });
+    });
+    document.body.appendChild(ourInput);
+    newLoad.addEventListener('click', function () { ourInput.click(); });
+    loadBtn.parentNode.replaceChild(newLoad, loadBtn);
+  }
+
+  var actionsObserver = new MutationObserver(patchActionButtons);
+  actionsObserver.observe(document.body, { childList: true, subtree: true });
+
+  /* Inject "Скачать PDF" button next to the reset button */
+  function injectPdfButton() {
+    if (document.querySelector('[data-testid="button-download-pdf"]')) return;
+    var resetBtn = Array.from(document.querySelectorAll('button')).find(function (b) {
+      return b.textContent.trim().includes('Сбросить настройки макета');
+    });
+    if (!resetBtn) return;
+
+    var pdfBtn = document.createElement('button');
+    pdfBtn.setAttribute('data-testid', 'button-download-pdf');
+    pdfBtn.type = 'button';
+    pdfBtn.className = resetBtn.className;
+    pdfBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"' +
+      ' stroke="currentColor" stroke-width="2" stroke-linecap="round"' +
+      ' stroke-linejoin="round" style="width:14px;height:14px;flex-shrink:0"' +
+      ' aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+      '<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+      '<span>Скачать PDF</span>';
+    pdfBtn.style.cssText += ';display:inline-flex;align-items:center;gap:6px;';
+    pdfBtn.addEventListener('click', generatePDF);
+    resetBtn.parentNode.insertBefore(pdfBtn, resetBtn.nextSibling);
+  }
+
+  var pdfObserver = new MutationObserver(injectPdfButton);
+  pdfObserver.observe(document.body, { childList: true, subtree: true });
+
+  /* PDF generation */
+  function generatePDF() {
+    if (!getJsPDF())         { alert('jsPDF не загружен');       return; }
+    if (!window.html2canvas) { alert('html2canvas не загружен'); return; }
+
+    var printEl = document.getElementById('print-root');
+    if (!printEl) { alert('Элемент print-root не найден'); return; }
+
+    var physW = 58, physH = 40;
+    var m = document.body.innerText.match(
+      /Физический размер[:\s]+(\d+)\s*[×xXхХ\u00D7]\s*(\d+)\s*мм/i
+    );
+    if (m) { physW = +m[1]; physH = +m[2]; }
+
+    var naturalW = parseFloat(printEl.style.width)  || printEl.scrollWidth;
+    var naturalH = parseFloat(printEl.style.height) || printEl.scrollHeight;
+
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = [
+      'position:fixed', 'left:-99999px', 'top:0',
+      'width:'  + naturalW + 'px', 'height:' + naturalH + 'px',
+      'overflow:visible', 'background:#fff', 'z-index:-1'
+    ].join(';');
+
+    var clone = printEl.cloneNode(true);
+    clone.style.cssText = [
+      'position:relative', 'left:0', 'top:0',
+      'width:'  + naturalW + 'px', 'height:' + naturalH + 'px',
+      'transform:none', 'transform-origin:top left',
+      'overflow:visible', 'box-shadow:none', 'border:none',
+      'border-radius:0', 'background:#fff',
+      'font-family:Inter,system-ui,-apple-system,sans-serif'
+    ].join(';');
+
+    var sz = clone.querySelector('.label-safezone');
+    if (sz) sz.style.display = 'none';
+
+    clone.querySelectorAll('*').forEach(function (el) {
+      var cs = getComputedStyle(el);
+      if (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden')
+        el.style.overflow = 'visible';
+      if (cs.webkitLineClamp && cs.webkitLineClamp !== 'none') {
+        el.style.webkitLineClamp = 'unset';
+        el.style.display = 'block';
+      }
+    });
+
+    wrapper.appendChild(clone);
+    document.body.appendChild(wrapper);
+
+    html2canvas(clone, {
+      scale: 6, useCORS: true, allowTaint: true,
+      backgroundColor: '#ffffff', logging: false,
+      width: naturalW, height: naturalH, x: 0, y: 0
+    }).then(function (canvas) {
+      document.body.removeChild(wrapper);
+      var imgData = canvas.toDataURL('image/png');
+      var doc = new (getJsPDF())({
+        orientation: physW >= physH ? 'landscape' : 'portrait',
+        unit: 'mm', format: [physW, physH]
+      });
+      doc.addImage(imgData, 'PNG', 0, 0, physW, physH);
+      doc.save('label.pdf');
+    }).catch(function (err) {
+      document.body.removeChild(wrapper);
+      console.error(err);
+      alert('Ошибка PDF: ' + err.message);
+    });
+  }
+}());
+</script>
+
+<script>
+/* ── Extra CSS-variable sliders (font size + code offsets) ────────────────── */
+(function () {
+  'use strict';
+
+  var injected = false;
+
+  /* Per-size presets for the CSS-variable sliders.
+     Keys match data-testid="button-size-{id}" */
+  var SIZE_PRESETS = {
+    '58x40': {
+      '--codes-offset-x':   0,
+      '--barcode-offset-x': 13,
+      '--qr-offset-x':      -20,
+      '--title-font-scale': 0.60,
+      '--meta-font-scale':  0.60,
+      '--store-font-scale': 0.60
+    },
+    '32x25': {
+      '--codes-offset-x':   0,
+      '--barcode-offset-x': 7,
+      '--qr-offset-x':      -9,
+      '--title-font-scale': 0.35,
+      '--meta-font-scale':  0.25,
+      '--store-font-scale': 0.40
+    },
+    '58x60': {
+      '--codes-offset-x':   0,
+      '--barcode-offset-x': 0,
+      '--qr-offset-x':      0,
+      '--title-font-scale': 0.85,
+      '--meta-font-scale':  0.65,
+      '--store-font-scale': 0.60
+    }
+  };
+
+  /* Default (used for sizes without a preset: 100x150, 102x76) */
+  var DEFAULTS = {
+    '--codes-offset-x':   0,
+    '--barcode-offset-x': 0,
+    '--qr-offset-x':      0,
+    '--title-font-scale': 1,
+    '--meta-font-scale':  1,
+    '--store-font-scale': 1
+  };
+
+  /* Currently active preset values (start with defaults) */
+  var activePreset = DEFAULTS;
+
+  /* Track the active size id */
+  var activeSizeId = null;
+
+  /* CSS overrides */
+  var style = document.createElement('style');
+  style.id = 'label-overrides';
+  style.textContent =
+    ':root{--codes-offset-x:0px;--barcode-offset-x:0px;--qr-offset-x:0px;' +
+    '--title-font-scale:1;--meta-font-scale:1;--store-font-scale:1}' +
+    '[data-testid="preview-code-stack"]{transform:translateX(var(--codes-offset-x)) !important}' +
+    '[data-testid="preview-barcode"]{transform:translateX(var(--barcode-offset-x)) !important}' +
+    '[data-testid="preview-qr"]{transform:translateX(var(--qr-offset-x)) !important}' +
+    '[data-testid="preview-title"]{font-size:calc(1em * var(--title-font-scale)) !important}' +
+    '[data-testid="preview-inventory"],[data-testid="preview-serial"]{font-size:calc(1em * var(--meta-font-scale)) !important}' +
+    '[data-testid="preview-store"]{font-size:calc(1em * var(--store-font-scale)) !important}' +
+    /* Make the custom range thumb match Radix UI thumb exactly */
+    '.lc-slider{position:relative;display:flex;width:100%;touch-action:none;user-select:none;align-items:center;cursor:pointer}' +
+    '.lc-track{position:relative;height:0.5rem;width:100%;flex-grow:1;overflow:hidden;border-radius:9999px;background-color:hsl(var(--secondary))}' +
+    '.lc-range{position:absolute;height:100%;background-color:hsl(var(--primary))}' +
+    '.lc-thumb{display:block;height:1.25rem;width:1.25rem;border-radius:9999px;border:2px solid hsl(var(--primary));background-color:hsl(var(--background));box-shadow:0 0 0 0 transparent;transition:box-shadow .15s;flex-shrink:0}' +
+    '.lc-thumb:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring))}' +
+    /* Group headers */
+    '.lc-group{margin-top:0.25rem}' +
+    '.lc-group-header{display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;cursor:pointer;user-select:none}' +
+    '.lc-group-title{font-size:0.75rem;font-weight:600;color:hsl(var(--foreground));letter-spacing:0.01em}' +
+    '.lc-group-chevron{width:0.875rem;height:0.875rem;color:hsl(var(--muted-foreground));transition:transform .2s;flex-shrink:0;margin-left:auto}' +
+    '.lc-group-chevron.open{transform:rotate(180deg)}' +
+    '.lc-group-body{display:flex;flex-direction:column;gap:1.25rem;overflow:hidden}' +
+    '.lc-group-body.collapsed{display:none}' +
+    '.lc-divider{height:1px;background-color:hsl(var(--border));margin:0.5rem 0}';
+  document.head.appendChild(style);
+
+  var sliderRegistry = [];
+
+  /* Public helper used by the config-load interceptor above */
+  window.__lcApplyVar = function (cssVar, value, unit) {
+    document.documentElement.style.setProperty(cssVar, value + unit);
+    sliderRegistry.forEach(function (s) {
+      if (s.cssVar === cssVar) s.setVal(value);
+    });
+  };
+
+  /* Apply a preset object to all CSS vars and registered sliders */
+  function applyPreset(preset) {
+    activePreset = preset;
+    Object.keys(preset).forEach(function (v) {
+      var val = preset[v];
+      document.documentElement.style.setProperty(v, val + (v.includes('offset') ? 'px' : ''));
+    });
+    sliderRegistry.forEach(function (s) {
+      if (s.cssVar in preset) s.setVal(preset[s.cssVar]);
+    });
+  }
+
+  /* Reset on "Сбросить" or size-button click */
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    var testId  = btn.getAttribute('data-testid') || '';
+    var isReset = btn.textContent.trim().includes('Сбросить настройки макета');
+    var isSize  = testId.startsWith('button-size-');
+
+    if (isSize) {
+      var sizeId  = testId.replace('button-size-', '');
+      activeSizeId = sizeId;
+      /* Apply after a tick so React has updated its own state first */
+      setTimeout(function () {
+        applyPreset(SIZE_PRESETS[sizeId] || DEFAULTS);
+      }, 50);
+      return;
+    }
+
+    if (isReset) {
+      applyPreset(SIZE_PRESETS[activeSizeId] || DEFAULTS);
+    }
+  }, true);
+
+  /* Build a slider that looks identical to the Radix UI sliders above it */
+  function makeSlider(label, cssVar, min, max, step, def, suffix) {
+    var wrap = document.createElement('div');
+
+    /* Header: label + value */
+    var hdr = document.createElement('div');
+    hdr.className = 'flex items-center justify-between mb-2';
+
+    var lbl = document.createElement('label');
+    lbl.className = 'text-xs text-muted-foreground';
+    lbl.textContent = label;
+
+    var valSpan = document.createElement('span');
+    valSpan.className = 'text-[11px] font-mono text-foreground tabular-nums';
+
+    function fmt(v) {
+      /* Match Radix display: 1 decimal for мм, 2 for × and px */
+      return (suffix === ' мм' ? parseFloat(v).toFixed(1) : parseFloat(v).toFixed(2)) + suffix;
+    }
+    valSpan.textContent = fmt(def);
+
+    hdr.appendChild(lbl);
+    hdr.appendChild(valSpan);
+
+    /* Slider track + thumb — same DOM structure as Radix */
+    var sliderEl = document.createElement('div');
+    sliderEl.className = 'lc-slider';
+    sliderEl.setAttribute('role', 'slider');
+    sliderEl.setAttribute('aria-valuemin', min);
+    sliderEl.setAttribute('aria-valuemax', max);
+    sliderEl.setAttribute('aria-valuenow', def);
+    sliderEl.tabIndex = 0;
+
+    var track = document.createElement('div');
+    track.className = 'lc-track';
+
+    var range = document.createElement('div');
+    range.className = 'lc-range';
+
+    var thumb = document.createElement('div');
+    thumb.className = 'lc-thumb';
+
+    track.appendChild(range);
+    sliderEl.appendChild(track);
+    sliderEl.appendChild(thumb);
+
+    var current = def;
+
+    function setVal(v) {
+      v = Math.min(max, Math.max(min, v));
+      /* Snap to step */
+      v = Math.round((v - min) / step) * step + min;
+      v = parseFloat(v.toFixed(10));
+      current = v;
+      var pct = (v - min) / (max - min) * 100;
+      range.style.width = pct + '%';
+      /* Centre thumb on the fill end */
+      thumb.style.position = 'absolute';
+      thumb.style.left = 'calc(' + pct + '% - 10px)';
+      valSpan.textContent = fmt(v);
+      sliderEl.setAttribute('aria-valuenow', v);
+      document.documentElement.style.setProperty(cssVar, v + (suffix === 'px' ? 'px' : ''));
+    }
+
+    setVal(def); /* initialise */
+
+    /* Mouse / touch drag */
+    function onMove(clientX) {
+      var rect = track.getBoundingClientRect();
+      var pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      setVal(min + pct * (max - min));
+    }
+
+    sliderEl.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      onMove(e.clientX);
+      function mm(e2) { onMove(e2.clientX); }
+      function mu()   { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); }
+      document.addEventListener('mousemove', mm);
+      document.addEventListener('mouseup',   mu);
+    });
+
+    sliderEl.addEventListener('touchstart', function (e) {
+      onMove(e.touches[0].clientX);
+      function tm(e2) { onMove(e2.touches[0].clientX); }
+      function te()   { sliderEl.removeEventListener('touchmove', tm); sliderEl.removeEventListener('touchend', te); }
+      sliderEl.addEventListener('touchmove', tm, { passive: true });
+      sliderEl.addEventListener('touchend',  te);
+    }, { passive: true });
+
+    /* Keyboard */
+    sliderEl.addEventListener('keydown', function (e) {
+      var d = { ArrowRight: step, ArrowUp: step, ArrowLeft: -step, ArrowDown: -step,
+                Home: min - current, End: max - current };
+      if (d[e.key] !== undefined) { e.preventDefault(); setVal(current + d[e.key]); }
+    });
+
+    /* Footer: min / max labels */
+    var ftr = document.createElement('div');
+    ftr.className = 'flex items-center justify-between mt-1 text-[10px] text-muted-foreground font-mono';
+    ftr.innerHTML = '<span>' + min + '</span><span>' + max + '</span>';
+
+    wrap.appendChild(hdr);
+    wrap.appendChild(sliderEl);
+    wrap.appendChild(ftr);
+
+    sliderRegistry.push({ reset: function () { setVal(def); }, setVal: setVal, cssVar: cssVar });
+    return wrap;
+  }
+
+  /* Create a collapsible group wrapper with a title */
+  function makeGroup(title, open) {
+    var group = document.createElement('div');
+    group.className = 'lc-group';
+
+    var hdr = document.createElement('div');
+    hdr.className = 'lc-group-header';
+
+    var titleEl = document.createElement('span');
+    titleEl.className = 'lc-group-title';
+    titleEl.textContent = title;
+
+    /* Chevron SVG */
+    var chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chevron.setAttribute('viewBox', '0 0 24 24');
+    chevron.setAttribute('fill', 'none');
+    chevron.setAttribute('stroke', 'currentColor');
+    chevron.setAttribute('stroke-width', '2');
+    chevron.setAttribute('stroke-linecap', 'round');
+    chevron.setAttribute('stroke-linejoin', 'round');
+    chevron.setAttribute('class', 'lc-group-chevron' + (open ? ' open' : ''));
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    path.setAttribute('points', '6 9 12 15 18 9');
+    chevron.appendChild(path);
+
+    hdr.appendChild(titleEl);
+    hdr.appendChild(chevron);
+
+    var body = document.createElement('div');
+    body.className = 'lc-group-body' + (open ? '' : ' collapsed');
+
+    hdr.addEventListener('click', function () {
+      var isOpen = !body.classList.contains('collapsed');
+      body.classList.toggle('collapsed', isOpen);
+      chevron.classList.toggle('open', !isOpen);
+    });
+
+    group.appendChild(hdr);
+    group.appendChild(body);
+    return { group: group, body: body };
+  }
+
+  /* Inject after the safe-margin slider row */
+  function injectSliders() {
+    if (injected) return;
+
+    var safeSlider = document.querySelector('[data-testid="slider-safe-margin"]');
+    if (!safeSlider) return;
+
+    /* Find the space-y container */
+    var anchor = safeSlider;
+    for (var i = 0; i < 8; i++) {
+      if (!anchor.parentElement) return;
+      if ((anchor.parentElement.getAttribute('class') || '').indexOf('space-y') !== -1) break;
+      anchor = anchor.parentElement;
+    }
+    if (!anchor || !anchor.parentElement) return;
+
+    var container    = anchor.parentElement;
+    var insertBefore = anchor.nextSibling; /* = safe-zone toggle */
+
+    /* ── Locate React slider rows by testid ─────────────────────────────── */
+    function getRow(testId) {
+      var el = container.querySelector('[data-testid="slider-' + testId + '"]');
+      if (!el) return null;
+      /* Walk up to direct child of container */
+      var row = el;
+      while (row.parentElement && row.parentElement !== container) row = row.parentElement;
+      return row;
+    }
+
+    var rowBarcodeW = getRow('barcode-scale');
+    var rowBarcodeH = getRow('barcode-height-scale');
+    var rowQr       = getRow('qr-scale');
+    var rowGap      = getRow('gap-scale');
+    var rowSafe     = getRow('safe-margin');
+
+    /* ── Build three groups ──────────────────────────────────────────────── */
+    var gBarcode = makeGroup('Штрихкод', true);
+    var gQr      = makeGroup('QR код',   true);
+    var gText    = makeGroup('Текст',    true);
+
+    /* Штрихкод: Штрих ширина, Штрих высота, Сдвиг штрихкода */
+    if (rowBarcodeW) gBarcode.body.appendChild(rowBarcodeW);
+    if (rowBarcodeH) gBarcode.body.appendChild(rowBarcodeH);
+    gBarcode.body.appendChild(makeSlider('Сдвиг штрихкода', '--barcode-offset-x', -80, 80, 1, 0, 'px'));
+
+    /* QR: QR размер, Сдвиг QR кода */
+    if (rowQr) gQr.body.appendChild(rowQr);
+    gQr.body.appendChild(makeSlider('Сдвиг QR кода', '--qr-offset-x', -80, 80, 1, 0, 'px'));
+
+    /* Текст: Интервалы, Безопасный отступ, Сдвиг кодов X, Размер заголовка, Размер инв/S/N, Размер магазина */
+    if (rowGap)  gText.body.appendChild(rowGap);
+    if (rowSafe) gText.body.appendChild(rowSafe);
+    gText.body.appendChild(makeSlider('Сдвиг Штрих / QR', '--codes-offset-x',  -100, 100, 1,    0, 'px'));
+    gText.body.appendChild(makeSlider('Размер заголовка', '--title-font-scale',  0.2,   2, 0.05, 1, '×'));
+    gText.body.appendChild(makeSlider('Размер инв/S/N',   '--meta-font-scale',   0.2,   2, 0.05, 1, '×'));
+    gText.body.appendChild(makeSlider('Размер магазина',  '--store-font-scale',  0.2,   2, 0.05, 1, '×'));
+
+    /* Insert groups before the safe-zone toggle */
+    container.insertBefore(gBarcode.group, insertBefore);
+    container.insertBefore(document.createElement('div'), insertBefore).className = 'lc-divider';
+    container.insertBefore(gQr.group,      insertBefore);
+    container.insertBefore(document.createElement('div'), insertBefore).className = 'lc-divider';
+    container.insertBefore(gText.group,    insertBefore);
+
+    /* Detect active size and apply preset */
+    var activeBtn = document.querySelector('[data-testid^="button-size-"][class*="border-primary"]');
+    if (activeBtn) {
+      activeSizeId = activeBtn.getAttribute('data-testid').replace('button-size-', '');
+      if (SIZE_PRESETS[activeSizeId]) applyPreset(SIZE_PRESETS[activeSizeId]);
+    }
+
+    injected = true;
+    obs.disconnect();
+  }
+
+  var obs = new MutationObserver(injectSliders);
+  obs.observe(document.body, { childList: true, subtree: true });
+}());
+</script>
+
+<script>
+/* ── Store logo overlay + size slider ──────────────────────────────────── */
+(function () {
+  'use strict';
+
+  /* ── SVG logos — paths to real files ───────────────────────────────── */
+  var LOGOS = {
+    'Перекрёсток': './perekrestok-logo.svg',
+    'Пятёрочка':   './pyaterochka-horizontal-logo.svg',
+    'Чижик':       './chizhik-horizontal-logo.svg'
+  };
+
+  var STORE_NAMES = ['Перекрёсток', 'Пятёрочка', 'Чижик'];
+
+  /* Currently active logo name (null = text mode) */
+  var activeLogo = null;
+
+  /* Logo scale: 1.0 = default */
+  var logoScale = 1.0;
+
+  /* ── CSS for the logo overlay ─────────────────────────────────────── */
+  var logoStyle = document.createElement('style');
+  logoStyle.textContent =
+    '#lc-store-logo { max-width:100%; height:auto; object-fit:contain; filter:url(#lc-threshold); display:block; margin:0 auto; }' +
+    /* Logo size slider row */
+    '#lc-logo-slider-row { display:none; margin-top:8px; }' +
+    '#lc-logo-slider-row.visible { display:block; }';
+  document.head.appendChild(logoStyle);
+
+  /* SVG filter for threshold (pure black & white) */
+  var svgFilter = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svgFilter.setAttribute('width', '0');
+  svgFilter.setAttribute('height', '0');
+  svgFilter.style.position = 'absolute';
+  svgFilter.innerHTML =
+    '<defs>' +
+      '<filter id="lc-threshold" color-interpolation-filters="sRGB">' +
+        '<feColorMatrix type="saturate" values="0"/>' +
+        '<feComponentTransfer>' +
+          '<feFuncR type="discrete" tableValues="0 0 0 1 1"/>' +
+          '<feFuncG type="discrete" tableValues="0 0 0 1 1"/>' +
+          '<feFuncB type="discrete" tableValues="0 0 0 1 1"/>' +
+        '</feComponentTransfer>' +
+      '</filter>' +
+      /* Perekrestok-specific: force all non-white to black */
+      '<filter id="lc-threshold-dark" color-interpolation-filters="sRGB">' +
+        '<feColorMatrix type="saturate" values="0"/>' +
+        '<feComponentTransfer>' +
+          '<feFuncR type="discrete" tableValues="0 0 0 0 0 0 0 1"/>' +
+          '<feFuncG type="discrete" tableValues="0 0 0 0 0 0 0 1"/>' +
+          '<feFuncB type="discrete" tableValues="0 0 0 0 0 0 0 1"/>' +
+        '</feComponentTransfer>' +
+      '</filter>' +
+    '</defs>';
+  document.body.appendChild(svgFilter);
+
+  /* ── Find the preview-store element ─────────────────────────────── */
+  function getStoreEl() {
+    return document.querySelector('[data-testid="preview-store"]');
+  }
+
+  function getStoreContainer() {
+    var el = getStoreEl();
+    return el ? el.parentElement : null;
+  }
+
+  /* Saved original innerHTML of preview-store */
+  var savedStoreHTML = null;
+
+  var logoOverlay = null;
+
+  function applyLogoSize() {
+    if (!logoOverlay) return;
+    logoOverlay.style.width  = (80 * logoScale) + '%';
+    logoOverlay.style.height = 'auto';
+  }
+
+  function showLogo(name) {
+    activeLogo = name;
+    var storeEl = getStoreEl();
+    if (!storeEl) return;
+
+    /* Save original content once */
+    if (savedStoreHTML === null) {
+      savedStoreHTML = storeEl.innerHTML;
+    }
+
+    /* Replace content with centred logo img */
+    storeEl.innerHTML = '';
+    storeEl.style.display        = 'flex';
+    storeEl.style.alignItems     = 'center';
+    storeEl.style.justifyContent = 'center';
+
+    logoOverlay = document.createElement('img');
+    logoOverlay.id  = 'lc-store-logo';
+    logoOverlay.src = LOGOS[name];
+    logoOverlay.alt = name;
+    /* Use darker threshold for Perekrestok to force all shades to black */
+    if (name === 'Перекрёсток') {
+      logoOverlay.style.filter = 'url(#lc-threshold-dark)';
+    }
+    applyLogoSize();
+    storeEl.appendChild(logoOverlay);
+
+    updateTagHighlight(name);
+    updateSliderVisibility(true);
+  }
+
+  function hideLogo() {
+    activeLogo = null;
+    var storeEl = getStoreEl();
+    if (storeEl && savedStoreHTML !== null) {
+      storeEl.innerHTML = savedStoreHTML;
+      storeEl.style.display        = '';
+      storeEl.style.alignItems     = '';
+      storeEl.style.justifyContent = '';
+      savedStoreHTML = null;
+      logoOverlay = null;
+    }
+    updateTagHighlight(null);
+    updateSliderVisibility(false);
+  }
+
+  function updateTagHighlight(activeName) {
+    var row = document.querySelector('[data-testid="store-tags-row"]');
+    if (!row) return;
+    Array.from(row.querySelectorAll('button[data-logo]')).forEach(function (btn) {
+      var isActive = btn.getAttribute('data-logo') === activeName;
+      btn.style.background  = isActive ? 'hsl(var(--primary))' : 'hsl(var(--secondary))';
+      btn.style.color       = isActive ? 'hsl(var(--primary-foreground))' : 'hsl(var(--secondary-foreground))';
+      btn.style.borderColor = isActive ? 'hsl(var(--primary))' : 'hsl(var(--border))';
+    });
+  }
+
+  function updateSliderVisibility(visible) {
+    var row = document.getElementById('lc-logo-slider-row');
+    if (!row) return;
+    row.classList.toggle('visible', visible);
+  }
+
+  /* ── Public API for save/load integration ────────────────────────── */
+  window.__lcShowLogo     = showLogo;
+  window.__lcHideLogo     = hideLogo;
+  window.__lcSetLogoScale = function (v) {
+    logoScale = v;
+    applyLogoSize();
+    /* Sync slider UI */
+    var sliderRow = document.getElementById('lc-logo-slider-row');
+    if (sliderRow) {
+      var fill  = sliderRow.querySelector('.lc-logo-fill');
+      var thumb = sliderRow.querySelector('.lc-logo-thumb');
+      var val   = sliderRow.querySelector('.lc-logo-val');
+      var MIN = 0.25, MAX = 2.0;
+      var pct = (v - MIN) / (MAX - MIN) * 100;
+      if (fill)  fill.style.width = pct + '%';
+      if (thumb) thumb.style.left = 'calc(' + pct + '% - 10px)';
+      if (val)   val.textContent  = Math.round(v * 100) + '%';
+    }
+  };
+  Object.defineProperty(window, '__lcActiveLogo',  { get: function () { return activeLogo;  } });
+  Object.defineProperty(window, '__lcLogoScale',   { get: function () { return logoScale;   } });
+
+  /* ── Re-apply logo if the app re-renders preview-store ───────────── */
+  var previewObs = new MutationObserver(function () {
+    if (!activeLogo) return;
+    var storeEl = getStoreEl();
+    if (!storeEl) return;
+    /* If our img is gone — re-inject */
+    if (!storeEl.querySelector('#lc-store-logo')) {
+      savedStoreHTML = null; /* reset so we don't restore stale HTML */
+      showLogo(activeLogo);
+    }
+  });
+  previewObs.observe(document.body, { childList: true, subtree: true });
+
+  /* Re-apply size on window resize */
+  window.addEventListener('resize', function () {
+    if (activeLogo) applyLogoSize();
+  });
+
+  /* ── Inject tags row + size slider below the store input ─────────── */
+  var tagsInjected = false;
+
+  function injectStoreTags() {
+    if (tagsInjected) return;
+
+    var storeInput = document.querySelector('[data-testid="input-store"]');
+    if (!storeInput) return;
+
+    /* Walk up to find the row/wrapper that contains the input */
+    var inputWrap = storeInput;
+    for (var i = 0; i < 6; i++) {
+      if (!inputWrap.parentElement) return;
+      inputWrap = inputWrap.parentElement;
+      if (inputWrap.children.length >= 1 && inputWrap.parentElement &&
+          (inputWrap.parentElement.getAttribute('class') || '').indexOf('space-y') !== -1) break;
+    }
+
+    /* ── Tags row ── */
+    var tagsRow = document.createElement('div');
+    tagsRow.setAttribute('data-testid', 'store-tags-row');
+    tagsRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;';
+
+    STORE_NAMES.forEach(function (name) {
+      var tag = document.createElement('button');
+      tag.type = 'button';
+      tag.textContent = name;
+      tag.setAttribute('data-logo', name);
+      tag.style.cssText = [
+        'display:inline-flex', 'align-items:center', 'justify-content:center',
+        'padding:2px 10px', 'border-radius:9999px',
+        'font-size:0.72rem', 'font-weight:500', 'line-height:1.6',
+        'cursor:pointer', 'transition:background .15s,color .15s,border-color .15s',
+        'border:1.5px solid hsl(var(--border))',
+        'background:hsl(var(--secondary))',
+        'color:hsl(var(--secondary-foreground))',
+        'white-space:nowrap'
+      ].join(';');
+
+      tag.addEventListener('mouseenter', function () {
+        if (activeLogo !== name) {
+          tag.style.background  = 'hsl(var(--accent))';
+          tag.style.borderColor = 'hsl(var(--accent))';
+        }
+      });
+      tag.addEventListener('mouseleave', function () {
+        if (activeLogo !== name) {
+          tag.style.background  = 'hsl(var(--secondary))';
+          tag.style.color       = 'hsl(var(--secondary-foreground))';
+          tag.style.borderColor = 'hsl(var(--border))';
+        }
+      });
+
+      tag.addEventListener('click', function () {
+        /* Set text in input */
+        var input = document.querySelector('[data-testid="input-store"]');
+        if (input) {
+          var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          setter.call(input, name);
+          input.dispatchEvent(new Event('input',  { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        /* Toggle logo */
+        if (activeLogo === name) {
+          hideLogo();
+        } else {
+          showLogo(name);
+        }
+      });
+
+      tagsRow.appendChild(tag);
+    });
+
+    /* ── "✕ Текст" button ── */
+    var clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.textContent = '✕ Текст';
+    clearBtn.title = 'Показать текст вместо логотипа';
+    clearBtn.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'justify-content:center',
+      'padding:2px 10px', 'border-radius:9999px',
+      'font-size:0.72rem', 'font-weight:500', 'line-height:1.6',
+      'cursor:pointer', 'transition:background .15s,color .15s,border-color .15s',
+      'border:1.5px dashed hsl(var(--border))',
+      'background:transparent',
+      'color:hsl(var(--muted-foreground))',
+      'white-space:nowrap'
+    ].join(';');
+    clearBtn.addEventListener('click', hideLogo);
+    tagsRow.appendChild(clearBtn);
+
+    /* ── Logo size slider row ── */
+    var sliderRow = document.createElement('div');
+    sliderRow.id = 'lc-logo-slider-row';
+
+    /* Header */
+    var sliderHdr = document.createElement('div');
+    sliderHdr.style.cssText = 'display:flex;align-items:center;justify-content:between;margin-bottom:6px;gap:8px;';
+
+    var sliderLbl = document.createElement('label');
+    sliderLbl.className = 'text-xs text-muted-foreground';
+    sliderLbl.textContent = 'Размер логотипа';
+    sliderLbl.style.flex = '1';
+
+    var sliderVal = document.createElement('span');
+    sliderVal.className = 'lc-logo-val';
+    sliderVal.style.cssText = 'font-size:11px;font-family:monospace;color:hsl(var(--foreground));min-width:36px;text-align:right;';
+    sliderVal.textContent = '100%';
+
+    sliderHdr.appendChild(sliderLbl);
+    sliderHdr.appendChild(sliderVal);
+
+    /* Track */
+    var sliderWrap = document.createElement('div');
+    sliderWrap.style.cssText = 'position:relative;display:flex;width:100%;align-items:center;cursor:pointer;height:20px;';
+
+    var track = document.createElement('div');
+    track.style.cssText = 'position:relative;height:0.5rem;width:100%;border-radius:9999px;background:hsl(var(--secondary));';
+
+    var fill = document.createElement('div');
+    fill.className = 'lc-logo-fill';
+    fill.style.cssText = 'position:absolute;height:100%;border-radius:9999px;background:hsl(var(--primary));width:50%;';
+
+    var thumb = document.createElement('div');
+    thumb.className = 'lc-logo-thumb';
+    thumb.style.cssText = [
+      'position:absolute', 'width:1.25rem', 'height:1.25rem',
+      'border-radius:9999px', 'border:2px solid hsl(var(--primary))',
+      'background:hsl(var(--background))', 'left:calc(50% - 10px)',
+      'top:50%', 'transform:translateY(-50%)', 'cursor:grab'
+    ].join(';');
+
+    track.appendChild(fill);
+    sliderWrap.appendChild(track);
+    sliderWrap.appendChild(thumb);
+
+    /* Min/max labels */
+    var sliderFtr = document.createElement('div');
+    sliderFtr.style.cssText = 'display:flex;justify-content:space-between;margin-top:2px;font-size:10px;font-family:monospace;color:hsl(var(--muted-foreground));';
+    sliderFtr.innerHTML = '<span>25%</span><span>200%</span>';
+
+    sliderRow.appendChild(sliderHdr);
+    sliderRow.appendChild(sliderWrap);
+    sliderRow.appendChild(sliderFtr);
+
+    /* Slider logic: range 0.25 – 2.0, default 1.0 */
+    var MIN = 0.25, MAX = 2.0, DEF = 1.0;
+
+    function setScale(v) {
+      v = Math.max(MIN, Math.min(MAX, v));
+      logoScale = v;
+      var pct = (v - MIN) / (MAX - MIN) * 100;
+      fill.style.width  = pct + '%';
+      thumb.style.left  = 'calc(' + pct + '% - 10px)';
+      sliderVal.textContent = Math.round(v * 100) + '%';
+      applyLogoSize();
+    }
+
+    setScale(DEF);
+
+    function onMove(clientX) {
+      var rect = track.getBoundingClientRect();
+      var pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      setScale(MIN + pct * (MAX - MIN));
+    }
+
+    sliderWrap.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      onMove(e.clientX);
+      function mm(e2) { onMove(e2.clientX); }
+      function mu()   { document.removeEventListener('mousemove', mm); document.removeEventListener('mouseup', mu); }
+      document.addEventListener('mousemove', mm);
+      document.addEventListener('mouseup',   mu);
+    });
+
+    sliderWrap.addEventListener('touchstart', function (e) {
+      onMove(e.touches[0].clientX);
+      function tm(e2) { onMove(e2.touches[0].clientX); }
+      function te()   { sliderWrap.removeEventListener('touchmove', tm); sliderWrap.removeEventListener('touchend', te); }
+      sliderWrap.addEventListener('touchmove', tm, { passive: true });
+      sliderWrap.addEventListener('touchend',  te);
+    }, { passive: true });
+
+    /* Insert everything after the input wrapper */
+    var insertAfter = inputWrap.nextSibling;
+    if (insertAfter) {
+      inputWrap.parentElement.insertBefore(sliderRow, insertAfter);
+      inputWrap.parentElement.insertBefore(tagsRow,   insertAfter);
+    } else {
+      inputWrap.parentElement.appendChild(tagsRow);
+      inputWrap.parentElement.appendChild(sliderRow);
+    }
+
+    tagsInjected = true;
+    tagsObs.disconnect();
+  }
+
+  var tagsObs = new MutationObserver(injectStoreTags);
+  tagsObs.observe(document.body, { childList: true, subtree: true });
+
+}());
+</script>
+
+<style id="batch-print-styles">
+  .lc-batch-backdrop{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(15,23,42,.62)}
+  .lc-batch-dialog{width:min(760px,100%);max-height:calc(100vh - 40px);overflow:auto;border-radius:12px;background:#fff;color:#111827;box-shadow:0 24px 80px rgba(0,0,0,.35);font-family:Inter,system-ui,sans-serif}
+  .lc-batch-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 22px 12px}
+  .lc-batch-title{margin:0;font-size:20px;font-weight:700}.lc-batch-help{margin:6px 0 0;color:#64748b;font-size:13px;line-height:1.45}
+  .lc-batch-close{border:0;background:transparent;color:#64748b;font-size:28px;line-height:1;cursor:pointer}
+  .lc-batch-body{padding:8px 22px 22px}.lc-batch-example{margin:0 0 8px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:#475569}
+  .lc-batch-input{box-sizing:border-box;width:100%;min-height:240px;resize:vertical;border:1px solid #cbd5e1;border-radius:8px;padding:12px;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:#0f172a;background:#fff}
+  .lc-batch-status{min-height:20px;margin-top:8px;color:#475569;font-size:13px}.lc-batch-status.is-error{color:#b91c1c}
+  .lc-batch-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}.lc-batch-btn{border:1px solid #cbd5e1;border-radius:7px;padding:9px 15px;background:#fff;color:#0f172a;font-size:14px;font-weight:600;cursor:pointer}.lc-batch-btn-primary{border-color:#01696f;background:#01696f;color:#fff}.lc-batch-btn:disabled{cursor:wait;opacity:.55}
+  #print-batch-root{display:none}
+  @media print{
+    body.lc-batch-printing>#root{display:none!important}
+    body.lc-batch-printing *{visibility:hidden!important}
+    body.lc-batch-printing>#print-batch-root,body.lc-batch-printing>#print-batch-root *{visibility:visible!important}
+    body.lc-batch-printing>#print-batch-root{display:block!important;position:absolute!important;left:0!important;top:0!important;width:auto!important;height:auto!important;margin:0!important;padding:0!important}
+    #print-batch-root .lc-print-label{position:relative!important;left:var(--print-offset-x,0px)!important;top:var(--print-offset-y,0px)!important;margin:0!important;padding:0!important;box-shadow:none!important;border:0!important;border-radius:0!important;transform:none!important;overflow:hidden!important;break-after:page!important;page-break-after:always!important}
+    #print-batch-root .lc-print-label:last-child{break-after:auto!important;page-break-after:auto!important}
+    #print-batch-root .label-safezone{display:none!important}
+  }
+</style>
+
+<script>
+/* Batch/continuous label printing: one data row always becomes one physical label. */
+(function () {
+  'use strict';
+  var dialog = null;
+  var defaultSizeApplied = false;
+
+  function updateSizeProfile(sizeId) {
+    if (sizeId) document.documentElement.setAttribute('data-lc-label-size', sizeId);
+  }
+
+  function field(name) { return document.querySelector('[data-testid="input-' + name + '"]'); }
+  function setReactValue(el, value) {
+    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    if (el && el.tagName === 'TEXTAREA') setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    setter.set.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function nextPaint() { return new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); }); }
+
+  function parseRows(text) {
+    var rows = [], errors = [];
+    text.split(/\r?\n/).forEach(function (raw, index) {
+      if (!raw.trim()) return;
+      var separator = raw.indexOf('\t') >= 0 ? '\t' : (raw.indexOf(';') >= 0 ? ';' : '|');
+      var cols = raw.split(separator).map(function (s) { return s.trim(); });
+      if (cols.length < 3 || !cols[0] || !cols[1] || !cols[2]) {
+        errors.push(index + 1); return;
+      }
+      rows.push({ title: cols[0], inventory: cols[1], serial: cols.slice(2).join(separator).trim() });
+    });
+    return { rows: rows, errors: errors };
+  }
+
+  function closeDialog() { if (dialog) { dialog.remove(); dialog = null; } }
+  function openDialog() {
+    if (dialog) return;
+    dialog = document.createElement('div');
+    dialog.className = 'lc-batch-backdrop';
+    dialog.innerHTML = '<section class="lc-batch-dialog" role="dialog" aria-modal="true" aria-labelledby="lc-batch-title">' +
+      '<div class="lc-batch-head"><div><h2 class="lc-batch-title" id="lc-batch-title">Печать списка этикеток</h2>' +
+      '<p class="lc-batch-help">Каждая строка будет напечатана на отдельной этикетке. Положение всех элементов останется строго одинаковым.</p></div>' +
+      '<button class="lc-batch-close" type="button" aria-label="Закрыть">×</button></div>' +
+      '<div class="lc-batch-body"><p class="lc-batch-example">Название оборудования ; Инвентарный номер ; Серийный номер</p>' +
+      '<textarea class="lc-batch-input" spellcheck="false" placeholder="Ноутбук Lenovo ThinkPad T14; CH00209875; SN-2026-000184\nМонитор Samsung 24; CH00209876; SN-2026-000185"></textarea>' +
+      '<div class="lc-batch-status">Можно вставить данные из Excel (3 столбца) или разделить поля точкой с запятой.</div>' +
+      '<div class="lc-batch-actions"><button class="lc-batch-btn lc-batch-cancel" type="button">Отмена</button><button class="lc-batch-btn lc-batch-btn-primary lc-batch-start" type="button">Печатать все</button></div></div></section>';
+    document.body.appendChild(dialog);
+    dialog.querySelector('.lc-batch-close').onclick = closeDialog;
+    dialog.querySelector('.lc-batch-cancel').onclick = closeDialog;
+    dialog.addEventListener('click', function (e) { if (e.target === dialog) closeDialog(); });
+    dialog.querySelector('.lc-batch-start').onclick = buildAndPrint;
+    dialog.querySelector('textarea').focus();
+  }
+
+  async function buildAndPrint() {
+    var textarea = dialog.querySelector('textarea'), status = dialog.querySelector('.lc-batch-status'), button = dialog.querySelector('.lc-batch-start');
+    var parsed = parseRows(textarea.value);
+    if (parsed.errors.length) { status.className = 'lc-batch-status is-error'; status.textContent = 'Проверьте строки: ' + parsed.errors.join(', ') + '. В каждой строке должны быть 3 заполненных поля.'; return; }
+    if (!parsed.rows.length) { status.className = 'lc-batch-status is-error'; status.textContent = 'Добавьте хотя бы одну строку с данными.'; return; }
+    var title = field('title'), inventory = field('inventory'), serial = field('serial');
+    var source = document.getElementById('print-root');
+    if (!title || !inventory || !serial || !source) { status.className = 'lc-batch-status is-error'; status.textContent = 'Не удалось найти поля макета. Обновите страницу и попробуйте снова.'; return; }
+    button.disabled = true; textarea.disabled = true; status.className = 'lc-batch-status';
+    var original = { title: title.value, inventory: inventory.value, serial: serial.value };
+    var batch = document.createElement('div'); batch.id = 'print-batch-root';
+    document.body.appendChild(batch);
+    try {
+      for (var i = 0; i < parsed.rows.length; i++) {
+        status.textContent = 'Подготовка этикетки ' + (i + 1) + ' из ' + parsed.rows.length + '…';
+        setReactValue(title, parsed.rows[i].title); setReactValue(inventory, parsed.rows[i].inventory); setReactValue(serial, parsed.rows[i].serial);
+        await nextPaint();
+        source = document.getElementById('print-root');
+        var clone = source.cloneNode(true); clone.removeAttribute('id'); clone.classList.add('lc-print-label');
+        clone.style.transform = 'none'; clone.style.transformOrigin = 'top left';
+        batch.appendChild(clone);
+      }
+      setReactValue(title, original.title); setReactValue(inventory, original.inventory); setReactValue(serial, original.serial); await nextPaint();
+      closeDialog(); document.body.classList.add('lc-batch-printing');
+      var clean = function () { document.body.classList.remove('lc-batch-printing'); if (batch.parentNode) batch.remove(); window.removeEventListener('afterprint', clean); };
+      window.addEventListener('afterprint', clean); window.print(); setTimeout(function () { if (!document.body.classList.contains('lc-batch-printing')) return; clean(); }, 30000);
+    } catch (e) {
+      setReactValue(title, original.title); setReactValue(inventory, original.inventory); setReactValue(serial, original.serial);
+      batch.remove(); button.disabled = false; textarea.disabled = false; status.className = 'lc-batch-status is-error'; status.textContent = 'Ошибка подготовки: ' + e.message;
+    }
+  }
+
+  function injectButton() {
+    if (!defaultSizeApplied) {
+      var size58x60 = document.querySelector('[data-testid="button-size-58x60"]');
+      if (size58x60) { defaultSizeApplied = true; updateSizeProfile('58x60'); size58x60.click(); }
+    }
+    if (document.querySelector('[data-testid="button-batch-print"]')) return;
+    var print = document.querySelector('[data-testid="button-print"]'); if (!print || !print.parentNode) return;
+    var button = print.cloneNode(true); button.setAttribute('data-testid', 'button-batch-print');
+    Array.from(button.childNodes).forEach(function (node) { if (node.nodeType === 3) node.remove(); });
+    var label = button.querySelector('span');
+    if (label) label.textContent = 'Печать списка';
+    else { label = document.createElement('span'); label.textContent = 'Печать списка'; button.appendChild(label); }
+    button.addEventListener('click', openDialog); print.parentNode.insertBefore(button, print);
+  }
+  new MutationObserver(injectButton).observe(document.body, { childList: true, subtree: true }); injectButton();
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest && event.target.closest('[data-testid^="button-size-"]');
+    if (button) updateSizeProfile(button.getAttribute('data-testid').replace('button-size-', ''));
+  }, true);
+}());
+</script>
+
+  </body>
+</html>
